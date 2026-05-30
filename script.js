@@ -29,7 +29,9 @@ function emptyBackendState() {
     settings: {},
     history: {},
     audit: [],
-    reminderSent: []
+    reminderSent: [],
+    emailQueue: [],
+    publicSignup: false
   };
 }
 
@@ -125,7 +127,8 @@ function ensureAccountShape(account) {
     role: account.role || 'user',
     disabled: Boolean(account.disabled),
     createdAt: account.createdAt || new Date().toISOString(),
-    lastLoginAt: account.lastLoginAt || ''
+    lastLoginAt: account.lastLoginAt || '',
+    lastFailedLoginAt: account.lastFailedLoginAt || ''
   };
 }
 
@@ -279,13 +282,13 @@ async function addAccount(event) {
     if (usingBackend()) {
       backendState.accounts = accounts;
       backendState.subscriptions[username] = [];
-      backendState.settings[username] = { monthlyBudget: 0, darkMode: false };
+      backendState.settings[username] = { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false };
       backendState.history[username] = [];
       await persistBackendState();
     } else {
       await saveAccounts(accounts);
       localStorage.setItem(subscriptionKeyFor(username), JSON.stringify([]));
-      localStorage.setItem(settingsKeyFor(username), JSON.stringify({ monthlyBudget: 0 }));
+      localStorage.setItem(settingsKeyFor(username), JSON.stringify({ monthlyBudget: 0, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false }));
       localStorage.setItem(historyKeyFor(username), JSON.stringify([]));
     }
     await writeAudit('create_account', username, `Created ${role} account.`);
@@ -328,6 +331,8 @@ function renderAccounts() {
   const tbody = document.getElementById('accountsTable');
   if (!tbody) return;
   renderSignupAccess();
+  renderEmailStatus();
+  renderUserPreviewSelector();
   const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
   const accounts = getAccounts().filter(account => {
     if (!search) return true;
@@ -354,6 +359,86 @@ function renderAccounts() {
     </tr>
   `).join('') || '<tr><td colspan="7">No users match your search.</td></tr>';
   renderAuditLog();
+}
+
+async function renderEmailStatus() {
+  const container = document.getElementById('emailStatus');
+  if (!container || !usingBackend()) return;
+
+  const health = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/health`).then(response => response.json()).catch(() => null);
+  const emailReady = Boolean(health?.email?.configured);
+  const queue = (backendState.emailQueue || []).slice(-20).reverse();
+  const counts = queue.reduce((totals, item) => {
+    totals[item.status || 'queued'] = (totals[item.status || 'queued'] || 0) + 1;
+    return totals;
+  }, {});
+
+  container.innerHTML = `
+    <p class="message ${emailReady ? 'success' : 'error'}">${emailReady ? 'Reminder email sending is configured.' : 'Reminder emails are queued only. Add RESEND_API_KEY and REMINDER_FROM_EMAIL to send.'}</p>
+    <div class="status-strip">
+      <span><strong>${counts.sent || 0}</strong> sent</span>
+      <span><strong>${counts.queued || 0}</strong> queued</span>
+      <span><strong>${counts.failed || 0}</strong> failed</span>
+    </div>
+    ${queue.map(item => `
+      <div class="history-item">
+        <div>
+          <strong>${escapeHtml(item.subscription || 'Reminder')}</strong>
+          <span>${escapeHtml(item.email || 'No email')} - ${escapeHtml(item.nextBillDate || 'No date')}</span>
+        </div>
+        <div>
+          <strong>${escapeHtml(item.status || 'queued')}</strong>
+          <span>${escapeHtml(item.error || new Date(item.createdAt).toLocaleString())}</span>
+        </div>
+      </div>
+    `).join('') || '<p class="muted compact">No reminder emails have been queued yet.</p>'}
+  `;
+}
+
+function renderUserPreviewSelector() {
+  const select = document.getElementById('previewUserSelect');
+  if (!select) return;
+
+  const selected = select.value || getAccounts().find(account => account.role === 'user')?.username || getAccounts()[0]?.username || '';
+  select.innerHTML = getAccounts().map(account => `<option value="${escapeHtml(account.username)}">${escapeHtml(account.username)}</option>`).join('');
+  select.value = getAccounts().some(account => account.username === selected) ? selected : (getAccounts()[0]?.username || '');
+  renderUserPreview();
+}
+
+function renderUserPreview() {
+  const container = document.getElementById('userPreview');
+  const select = document.getElementById('previewUserSelect');
+  if (!container || !select) return;
+
+  const username = select.value;
+  const account = getAccounts().find(item => item.username === username);
+  const subscriptions = getSubscriptionsForUser(username);
+  const settings = getSettingsForUser(username);
+  const billable = subscriptions.filter(isBillable);
+  const monthly = billable.reduce((sum, sub) => sum + monthlyEquivalent(sub), 0);
+  const dueSoon = getUpcomingBills(subscriptions, 30).slice(0, 5);
+
+  container.innerHTML = account ? `
+    <div class="preview-stats">
+      <div><span>Monthly</span><strong>$${monthly.toFixed(2)}</strong></div>
+      <div><span>Subscriptions</span><strong>${subscriptions.length}</strong></div>
+      <div><span>Budget</span><strong>$${Number(settings.monthlyBudget || 0).toFixed(2)}</strong></div>
+    </div>
+    <div class="history-list">
+      ${dueSoon.map(sub => `
+        <div class="history-item">
+          <div>
+            <strong>${escapeHtml(sub.name)}</strong>
+            <span>${escapeHtml(sub.category)} - ${escapeHtml(formatDate(sub.nextBillDate))}</span>
+          </div>
+          <div>
+            <strong>$${Number(sub.cost).toFixed(2)}</strong>
+            <span>${escapeHtml(sub.status)}</span>
+          </div>
+        </div>
+      `).join('') || '<p class="muted compact">No upcoming bills for this user.</p>'}
+    </div>
+  ` : '<p class="muted compact">Choose a user to preview their dashboard.</p>';
 }
 
 function changeUserRole(username, role) {
@@ -468,6 +553,7 @@ function saveSignupAccess(event) {
     .then(() => {
       renderSignupAccess();
       renderLoginSignupPrompt();
+      writeAudit('signup_access', 'public_signup', backendState.publicSignup ? 'Enabled public signup.' : 'Disabled public signup.');
       showMessage(message, backendState.publicSignup ? 'Public signup enabled.' : 'Public signup disabled.', false);
     })
     .catch(() => showMessage(message, 'Signup access could not be saved.', true));
@@ -593,6 +679,8 @@ function processReminderEmails(subscriptions) {
   if (!BACKEND_CONFIG.enabled || !BACKEND_CONFIG.apiBaseUrl) return;
   const session = getSession();
   const account = getAccounts().find(item => item.username === session?.username);
+  const settings = getSettings();
+  if (settings.emailRemindersEnabled === false) return;
   if (!account?.email) return;
 
   const now = new Date();
@@ -619,7 +707,17 @@ function renderAuditLog() {
   const container = document.getElementById('auditLog');
   if (!container) return;
 
-  const entries = getAuditLog().slice(-12).reverse();
+  renderAuditFilters();
+  const search = (document.getElementById('auditSearch')?.value || '').trim().toLowerCase();
+  const action = document.getElementById('auditActionFilter')?.value || 'all';
+  const user = document.getElementById('auditUserFilter')?.value || 'all';
+  const entries = getAuditLog().filter(entry => {
+    const matchesAction = action === 'all' || entry.action === action;
+    const matchesUser = user === 'all' || entry.actor === user || entry.target === user;
+    const haystack = [entry.action, entry.detail, entry.actor, entry.target, entry.createdAt].join(' ').toLowerCase();
+    return matchesAction && matchesUser && (!search || haystack.includes(search));
+  }).slice(-40).reverse();
+
   container.innerHTML = entries.map(entry => `
     <div class="history-item">
       <div>
@@ -632,6 +730,23 @@ function renderAuditLog() {
       </div>
     </div>
   `).join('') || '<p class="muted compact">No admin activity yet.</p>';
+}
+
+function renderAuditFilters() {
+  const actionSelect = document.getElementById('auditActionFilter');
+  const userSelect = document.getElementById('auditUserFilter');
+  if (!actionSelect || !userSelect) return;
+
+  const entries = getAuditLog();
+  const selectedAction = actionSelect.value || 'all';
+  const selectedUser = userSelect.value || 'all';
+  const actions = [...new Set(entries.map(entry => entry.action).filter(Boolean))].sort();
+  const users = [...new Set(entries.flatMap(entry => [entry.actor, entry.target]).filter(Boolean))].sort();
+
+  actionSelect.innerHTML = '<option value="all">All actions</option>' + actions.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item.replace(/_/g, ' '))}</option>`).join('');
+  userSelect.innerHTML = '<option value="all">All users</option>' + users.map(item => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join('');
+  actionSelect.value = actions.includes(selectedAction) ? selectedAction : 'all';
+  userSelect.value = users.includes(selectedUser) ? selectedUser : 'all';
 }
 
 function exportUsers() {
@@ -691,9 +806,27 @@ function getCurrentHistoryKey() {
 function getSettings() {
   if (usingBackend()) {
     const session = getSession();
-    return { monthlyBudget: 0, darkMode: false, ...(backendState.settings[session?.username || 'guest'] || {}) };
+    return {
+      monthlyBudget: 0,
+      darkMode: false,
+      emailRemindersEnabled: true,
+      defaultReminderDays: 7,
+      highCostWarnings: true,
+      highCostLimit: HIGH_COST_THRESHOLD,
+      monthlySummaryEmail: false,
+      ...(backendState.settings[session?.username || 'guest'] || {})
+    };
   }
-  return { monthlyBudget: 0, darkMode: false, ...JSON.parse(localStorage.getItem(getCurrentSettingsKey()) || '{}') };
+  return {
+    monthlyBudget: 0,
+    darkMode: false,
+    emailRemindersEnabled: true,
+    defaultReminderDays: 7,
+    highCostWarnings: true,
+    highCostLimit: HIGH_COST_THRESHOLD,
+    monthlySummaryEmail: false,
+    ...JSON.parse(localStorage.getItem(getCurrentSettingsKey()) || '{}')
+  };
 }
 
 function saveSettings(settings) {
@@ -830,9 +963,9 @@ function getSubscriptionsForUser(username) {
 
 function getSettingsForUser(username) {
   if (usingBackend()) {
-    return { monthlyBudget: 0, darkMode: false, ...(backendState.settings[username] || {}) };
+    return { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false, ...(backendState.settings[username] || {}) };
   }
-  return { monthlyBudget: 0, darkMode: false, ...JSON.parse(localStorage.getItem(settingsKeyFor(username)) || '{}') };
+  return { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false, ...JSON.parse(localStorage.getItem(settingsKeyFor(username)) || '{}') };
 }
 
 function ensureSubscriptionShape(sub) {
@@ -848,6 +981,9 @@ function ensureSubscriptionShape(sub) {
     status: sub.status || 'Active',
     reminderDays: Number(sub.reminderDays) || 0,
     paymentMethod: sub.paymentMethod || '',
+    accountEmail: sub.accountEmail || '',
+    cancelUrl: sub.cancelUrl || '',
+    supportUrl: sub.supportUrl || '',
     notes: sub.notes || '',
     priceHistory: Array.isArray(sub.priceHistory) ? sub.priceHistory : []
   };
@@ -909,6 +1045,9 @@ function addSubscription(event) {
   const status = document.getElementById('subStatus').value;
   const reminderDays = Number(document.getElementById('subReminder').value);
   const paymentMethod = document.getElementById('subPayment').value.trim();
+  const accountEmail = document.getElementById('subAccountEmail').value.trim();
+  const cancelUrl = document.getElementById('subCancelUrl').value.trim();
+  const supportUrl = document.getElementById('subSupportUrl').value.trim();
   const notes = document.getElementById('subNotes').value.trim();
 
   if (!nextBillDate) {
@@ -933,10 +1072,10 @@ function addSubscription(event) {
           newCycle: formatBillingCycle({ ...existing, ...billingSchedule })
         });
       }
-      subscriptions[index] = { ...existing, name, category, cost, ...billingSchedule, nextBillDate, status, reminderDays, paymentMethod, notes, priceHistory };
+      subscriptions[index] = { ...existing, name, category, cost, ...billingSchedule, nextBillDate, status, reminderDays, paymentMethod, accountEmail, cancelUrl, supportUrl, notes, priceHistory };
     }
   } else {
-    subscriptions.push({ id: makeId(), name, category, cost, ...billingSchedule, nextBillDate, status, reminderDays, paymentMethod, notes });
+    subscriptions.push({ id: makeId(), name, category, cost, ...billingSchedule, nextBillDate, status, reminderDays, paymentMethod, accountEmail, cancelUrl, supportUrl, notes });
   }
 
   saveSubscriptions(subscriptions);
@@ -958,6 +1097,9 @@ function editSubscription(id) {
   document.getElementById('subStatus').value = sub.status;
   document.getElementById('subReminder').value = String(sub.reminderDays || 0);
   document.getElementById('subPayment').value = sub.paymentMethod || '';
+  document.getElementById('subAccountEmail').value = sub.accountEmail || '';
+  document.getElementById('subCancelUrl').value = sub.cancelUrl || '';
+  document.getElementById('subSupportUrl').value = sub.supportUrl || '';
   document.getElementById('subNotes').value = sub.notes || '';
   document.getElementById('subscriptionFormTitle').textContent = 'Edit Subscription';
   document.getElementById('saveSubButton').textContent = 'Update Subscription';
@@ -1109,6 +1251,8 @@ function renderDashboard() {
       <td data-label="Status"><span class="pill ${statusClass(sub.status)}">${escapeHtml(sub.status)}</span></td>
       <td data-label="Actions" class="actions-cell">
         <button class="btn ghost small-btn" onclick="editSubscription('${escapeJs(sub.id)}')">Edit</button>
+        ${sub.cancelUrl ? `<a class="btn ghost small-btn" href="${escapeHtml(safeUrl(sub.cancelUrl))}" target="_blank" rel="noopener">Cancel</a>` : ''}
+        ${sub.supportUrl ? `<a class="btn ghost small-btn" href="${escapeHtml(safeUrl(sub.supportUrl))}" target="_blank" rel="noopener">Support</a>` : ''}
         <button class="btn danger small-btn" onclick="deleteSubscription('${escapeJs(sub.id)}')">Delete</button>
       </td>
     </tr>
@@ -1323,11 +1467,13 @@ function saveMonthlySnapshot(subscriptions) {
 
 function getSavingsCandidates(subscriptions) {
   const candidates = new Map();
+  const settings = getSettings();
+  const highCostLimit = Number(settings.highCostLimit || HIGH_COST_THRESHOLD);
   subscriptions.forEach(sub => {
     if (sub.status === 'Review' || sub.status === 'Cancel Soon') {
       candidates.set(sub.id, { ...sub, reason: `${sub.status} status` });
-    } else if (monthlyEquivalent(sub) >= HIGH_COST_THRESHOLD) {
-      candidates.set(sub.id, { ...sub, reason: `High monthly cost over $${HIGH_COST_THRESHOLD}` });
+    } else if (settings.highCostWarnings !== false && monthlyEquivalent(sub) >= highCostLimit) {
+      candidates.set(sub.id, { ...sub, reason: `High monthly cost over $${highCostLimit}` });
     }
   });
 
@@ -1558,6 +1704,16 @@ function renderSettings() {
     const account = getAccounts().find(item => item.username === session?.username);
     emailInput.value = account?.email || '';
   }
+  const emailReminders = document.getElementById('emailRemindersEnabled');
+  const defaultReminder = document.getElementById('defaultReminderDays');
+  const highCostWarnings = document.getElementById('highCostWarnings');
+  const highCostLimit = document.getElementById('highCostLimit');
+  const monthlySummary = document.getElementById('monthlySummaryEmail');
+  if (emailReminders) emailReminders.checked = settings.emailRemindersEnabled !== false;
+  if (defaultReminder) defaultReminder.value = String(settings.defaultReminderDays ?? 7);
+  if (highCostWarnings) highCostWarnings.checked = settings.highCostWarnings !== false;
+  if (highCostLimit && document.activeElement !== highCostLimit) highCostLimit.value = Number(settings.highCostLimit || HIGH_COST_THRESHOLD);
+  if (monthlySummary) monthlySummary.checked = Boolean(settings.monthlySummaryEmail);
 }
 
 function saveBudget(event) {
@@ -1569,10 +1725,10 @@ function saveBudget(event) {
   renderDashboard();
 }
 
-function saveReminderEmail(event) {
+function saveProfile(event) {
   event.preventDefault();
   const email = document.getElementById('accountEmail').value.trim();
-  const message = document.getElementById('emailMessage');
+  const message = document.getElementById('profileMessage');
   const session = getSession();
   const accounts = getAccounts();
   const account = accounts.find(item => item.username === session?.username);
@@ -1589,7 +1745,33 @@ function saveReminderEmail(event) {
 
   account.email = email;
   saveAccounts(accounts);
-  showMessage(message, email ? 'Reminder email saved.' : 'Reminder email cleared.', false);
+  writeAudit('profile_update', account.username, 'Updated profile email.');
+  showMessage(message, email ? 'Profile email saved.' : 'Profile email cleared.', false);
+}
+
+function saveReminderEmail(event) {
+  return saveProfile(event);
+}
+
+function saveNotificationPreferences(event) {
+  event.preventDefault();
+  const message = document.getElementById('notificationMessage');
+  const settings = getSettings();
+  const updated = {
+    ...settings,
+    emailRemindersEnabled: Boolean(document.getElementById('emailRemindersEnabled').checked),
+    defaultReminderDays: Number(document.getElementById('defaultReminderDays').value) || 0,
+    highCostWarnings: Boolean(document.getElementById('highCostWarnings').checked),
+    highCostLimit: Number(document.getElementById('highCostLimit').value) || HIGH_COST_THRESHOLD,
+    monthlySummaryEmail: Boolean(document.getElementById('monthlySummaryEmail').checked)
+  };
+  saveSettings(updated)
+    .then(() => {
+      writeAudit('notification_preferences', getSession()?.username, 'Updated notification preferences.');
+      showMessage(message, 'Notification preferences saved.', false);
+      renderDashboard();
+    })
+    .catch(() => showMessage(message, 'Notification preferences could not be saved.', true));
 }
 
 async function changePassword(event) {
@@ -1754,6 +1936,12 @@ function escapeHtml(value) {
 
 function escapeJs(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function safeUrl(value) {
+  const text = String(value || '').trim();
+  if (/^https?:\/\//i.test(text)) return text;
+  return '#';
 }
 
 document.addEventListener('DOMContentLoaded', async () => {

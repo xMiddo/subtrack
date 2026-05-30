@@ -109,7 +109,34 @@
 
       <div class="card table-card">
         <h2>Audit Log</h2>
+        <div class="table-controls audit-controls">
+          <input id="auditSearch" type="search" placeholder="Search audit log" oninput="renderAuditLog()" />
+          <select id="auditActionFilter" onchange="renderAuditLog()">
+            <option value="all">All actions</option>
+          </select>
+          <select id="auditUserFilter" onchange="renderAuditLog()">
+            <option value="all">All users</option>
+          </select>
+        </div>
         <div id="auditLog" class="history-list"></div>
+      </div>
+    </section>
+
+    <section class="dashboard-grid lower-grid">
+      <div class="card table-card">
+        <div class="table-head">
+          <h2>Email Status</h2>
+          <button class="btn ghost small-btn" type="button" onclick="renderEmailStatus()">Refresh</button>
+        </div>
+        <div id="emailStatus" class="history-list"></div>
+      </div>
+
+      <div class="card table-card">
+        <div class="table-head">
+          <h2>User Dashboard Preview</h2>
+          <select id="previewUserSelect" onchange="renderUserPreview()"></select>
+        </div>
+        <div id="userPreview" class="preview-panel"></div>
       </div>
     </section>
   </main>

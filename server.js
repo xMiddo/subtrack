@@ -180,6 +180,7 @@ function sanitizeStateForClient(state, session = null) {
   cleanState.invites = session?.role === 'admin'
     ? (cleanState.invites || []).map(({ token, ...invite }) => invite)
     : [];
+  cleanState.emailQueue = session?.role === 'admin' ? (cleanState.emailQueue || []) : [];
   return cleanState;
 }
 
@@ -288,6 +289,18 @@ function accountSession(account) {
   return { username: account.username, role: account.role || 'user' };
 }
 
+function appendAudit(state, action, target, detail, actor = 'system') {
+  state.audit = state.audit || [];
+  state.audit.push({
+    action,
+    target,
+    detail,
+    actor,
+    createdAt: new Date().toISOString()
+  });
+  state.audit = state.audit.slice(-250);
+}
+
 function isSecureRequest(req) {
   return req.headers['x-forwarded-proto'] === 'https' || String(req.headers.host || '').endsWith('.up.railway.app');
 }
@@ -385,6 +398,10 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         storage: DATABASE_URL ? 'postgres' : 'json-file',
         database: getDatabaseStatus(),
+        email: {
+          provider: 'resend',
+          configured: Boolean(RESEND_API_KEY && REMINDER_FROM_EMAIL)
+        },
         dataDir: DATABASE_URL ? null : DATA_DIR
       });
       return;
@@ -414,6 +431,8 @@ const server = http.createServer(async (req, res) => {
       const account = (state.accounts || []).find(item => item.username === String(body.username || '').trim());
 
       if (!account || !(await verifyPassword(account, String(body.password || '')))) {
+        appendAudit(state, 'failed_login', String(body.username || '').trim() || 'unknown', 'Failed login attempt.', String(body.username || '').trim() || 'unknown');
+        await writeState(state);
         sendJson(res, 401, { ok: false, error: 'Incorrect username or password.' });
         return;
       }
@@ -424,6 +443,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       account.lastLoginAt = new Date().toISOString();
+      appendAudit(state, 'login', account.username, 'User logged in.', account.username);
       await migrateAccountPassword(state, account);
       if (!account.password) await writeState(state);
       setSessionCookie(req, res, accountSession(account));
@@ -462,6 +482,8 @@ const server = http.createServer(async (req, res) => {
 
       account.password = updatedPassword;
       await writeState(state);
+      appendAudit(state, 'password_change', session.username, 'Changed account password.', session.username);
+      await writeState(state);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -495,6 +517,7 @@ const server = http.createServer(async (req, res) => {
         usedAt: ''
       };
       state.invites = [...(state.invites || []).filter(item => !item.usedAt), invite].slice(-50);
+      appendAudit(state, 'create_invite', username, `Created ${role} invite for ${email}.`, session.username);
       await writeState(state);
       sendJson(res, 200, { ok: true, invite });
       return;
@@ -528,9 +551,10 @@ const server = http.createServer(async (req, res) => {
 
       state.accounts.push({ username, email, password, role, disabled: false, createdAt: new Date().toISOString(), lastLoginAt: '' });
       state.subscriptions[username] = [];
-      state.settings[username] = { monthlyBudget: 0, darkMode: false };
+      state.settings[username] = { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: 30, monthlySummaryEmail: false };
       state.history[username] = [];
       if (invite) invite.usedAt = new Date().toISOString();
+      appendAudit(state, invite ? 'accept_invite' : 'public_signup', username, 'Created account through signup.', username);
       await writeState(state);
       const account = (await readState()).accounts.find(item => item.username === username);
       setSessionCookie(req, res, accountSession(account));
@@ -587,6 +611,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       state.emailQueue = [...(state.emailQueue || []), message].slice(-250);
+      appendAudit(state, `reminder_${message.status}`, session.username, `${message.subscription} reminder ${message.status}.`, session.username);
       await writeState(state);
       sendJson(res, 200, { ok: true, status: message.status });
       return;

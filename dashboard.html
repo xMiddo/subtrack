@@ -175,6 +175,12 @@
           </select>
           <label for="subPayment">Payment Method</label>
           <input id="subPayment" type="text" placeholder="Visa ending 1234" />
+          <label for="subAccountEmail">Service Account Email</label>
+          <input id="subAccountEmail" type="email" placeholder="account@example.com" />
+          <label for="subCancelUrl">Cancellation URL</label>
+          <input id="subCancelUrl" type="url" placeholder="https://example.com/cancel" />
+          <label for="subSupportUrl">Support URL</label>
+          <input id="subSupportUrl" type="url" placeholder="https://example.com/support" />
           <label for="subNotes">Notes</label>
           <textarea id="subNotes" rows="4" placeholder="Cancellation link, account email, plan details"></textarea>
           <div class="form-actions">
@@ -232,12 +238,54 @@
         </div>
 
         <div class="card form-card">
-          <h2>Reminder Email</h2>
-          <form onsubmit="saveReminderEmail(event)" class="stack-form">
+          <h2>Profile</h2>
+          <form onsubmit="saveProfile(event)" class="stack-form">
             <label for="accountEmail">Email Address</label>
             <input id="accountEmail" type="email" placeholder="you@example.com" />
-            <p id="emailMessage" class="message hidden"></p>
-            <button class="btn" type="submit">Save Email</button>
+            <p id="profileMessage" class="message hidden"></p>
+            <button class="btn" type="submit">Save Profile</button>
+          </form>
+        </div>
+
+        <div class="card form-card">
+          <h2>Notifications</h2>
+          <form onsubmit="saveNotificationPreferences(event)" class="stack-form">
+            <label class="setting-toggle" for="emailRemindersEnabled">
+              <span>
+                <strong>Email reminders</strong>
+                <small>Send reminders before renewals</small>
+              </span>
+              <input id="emailRemindersEnabled" type="checkbox" />
+              <span class="switch-track" aria-hidden="true"></span>
+            </label>
+            <label for="defaultReminderDays">Default Reminder</label>
+            <select id="defaultReminderDays">
+              <option value="0">No reminder</option>
+              <option value="1">1 day before</option>
+              <option value="3">3 days before</option>
+              <option value="7">7 days before</option>
+              <option value="14">14 days before</option>
+            </select>
+            <label class="setting-toggle" for="highCostWarnings">
+              <span>
+                <strong>High-cost warnings</strong>
+                <small>Highlight subscriptions over your threshold</small>
+              </span>
+              <input id="highCostWarnings" type="checkbox" />
+              <span class="switch-track" aria-hidden="true"></span>
+            </label>
+            <label for="highCostLimit">High-Cost Threshold</label>
+            <input id="highCostLimit" type="number" min="0" step="1" placeholder="30" />
+            <label class="setting-toggle" for="monthlySummaryEmail">
+              <span>
+                <strong>Monthly summary email</strong>
+                <small>Receive a spending recap each month</small>
+              </span>
+              <input id="monthlySummaryEmail" type="checkbox" />
+              <span class="switch-track" aria-hidden="true"></span>
+            </label>
+            <p id="notificationMessage" class="message hidden"></p>
+            <button class="btn" type="submit">Save Notifications</button>
           </form>
         </div>
 
