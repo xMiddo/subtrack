@@ -671,6 +671,71 @@ th {
   width: auto;
 }
 
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 18px 0 12px;
+  padding: 16px;
+  border: 1px solid #edf0f5;
+  border-radius: 16px;
+  background: #fafbff;
+  cursor: pointer;
+}
+
+.setting-toggle span:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.setting-toggle small {
+  color: #637083;
+  font-weight: 800;
+}
+
+.setting-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.switch-track {
+  position: relative;
+  width: 52px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background .18s ease;
+}
+
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, .2);
+  transition: transform .18s ease;
+}
+
+.setting-toggle input:checked + .switch-track {
+  background: #4f46e5;
+}
+
+.setting-toggle input:checked + .switch-track::after {
+  transform: translateX(22px);
+}
+
+.dark-mode .setting-toggle {
+  background: #111827;
+  border-color: #334155;
+}
+
 .chart-meta {
   display: flex;
   justify-content: space-between;

@@ -465,14 +465,27 @@ function saveSignupAccess(event) {
   const message = document.getElementById('signupAccessMessage');
   backendState.publicSignup = Boolean(document.getElementById('publicSignupEnabled').checked);
   persistBackendState()
-    .then(() => showMessage(message, backendState.publicSignup ? 'Public signup enabled.' : 'Public signup disabled.', false))
+    .then(() => {
+      renderSignupAccess();
+      renderLoginSignupPrompt();
+      showMessage(message, backendState.publicSignup ? 'Public signup enabled.' : 'Public signup disabled.', false);
+    })
     .catch(() => showMessage(message, 'Signup access could not be saved.', true));
 }
 
 function renderSignupAccess() {
   const checkbox = document.getElementById('publicSignupEnabled');
   if (!checkbox || !usingBackend()) return;
-  checkbox.checked = Boolean(backendState.publicSignup);
+  const enabled = Boolean(backendState.publicSignup);
+  const status = document.getElementById('signupAccessStatus');
+  checkbox.checked = enabled;
+  if (status) status.textContent = enabled ? 'Open to new users' : 'Invite-only';
+}
+
+function renderLoginSignupPrompt() {
+  const prompt = document.getElementById('signupPrompt');
+  if (!prompt) return;
+  prompt.classList.toggle('hidden', !usingBackend() || !backendState.publicSignup);
 }
 
 async function signup(event) {
@@ -1765,4 +1778,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderSignupForm();
   }
   renderLoginPageMessage();
+  renderLoginSignupPrompt();
 });

@@ -93,10 +93,15 @@
       <div class="card form-card">
         <h2>Signup Access</h2>
         <form onsubmit="saveSignupAccess(event)" class="stack-form">
-          <label class="check-row" for="publicSignupEnabled">
-            <input id="publicSignupEnabled" type="checkbox" />
-            Allow public self-signup
+          <label class="setting-toggle" for="publicSignupEnabled">
+            <span>
+              <strong>Public self-signup</strong>
+              <small id="signupAccessStatus">Invite-only</small>
+            </span>
+            <input id="publicSignupEnabled" type="checkbox" onchange="renderSignupAccess()" />
+            <span class="switch-track" aria-hidden="true"></span>
           </label>
+          <p class="muted compact">When enabled, the login page shows a sign-up link. Invite links still work even when public signup is off.</p>
           <p id="signupAccessMessage" class="message hidden"></p>
           <button class="btn" type="submit">Save Signup Access</button>
         </form>
