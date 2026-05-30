@@ -41,7 +41,14 @@ async function loadBackendState() {
   const stateUrl = `${BACKEND_CONFIG.apiBaseUrl}/state`;
   try {
     const response = await fetch(stateUrl, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`${stateUrl} returned ${response.status}`);
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const errorBody = await response.json();
+        detail = errorBody.error ? `: ${errorBody.error}` : '';
+      } catch (parseError) {}
+      throw new Error(`${stateUrl} returned ${response.status}${detail}`);
+    }
     backendState = { ...emptyBackendState(), ...await response.json() };
     backendError = '';
   } catch (error) {

@@ -7,6 +7,7 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(ROOT, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';
+const DATABASE_SSL = process.env.DATABASE_SSL || process.env.PGSSLMODE || '';
 let sql = null;
 
 const MIME_TYPES = {
@@ -64,10 +65,25 @@ function getSql() {
     const postgres = require('postgres');
     sql = postgres(DATABASE_URL, {
       max: 3,
-      ssl: DATABASE_URL.includes('localhost') ? false : 'require'
+      ssl: getDatabaseSslMode()
     });
   }
   return sql;
+}
+
+function getDatabaseSslMode() {
+  if (/^(require|true)$/i.test(DATABASE_SSL)) return 'require';
+  if (/^(disable|false)$/i.test(DATABASE_SSL)) return false;
+
+  let host = '';
+  try {
+    host = new URL(DATABASE_URL).hostname;
+  } catch (error) {
+    return false;
+  }
+
+  if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.railway.internal')) return false;
+  return 'require';
 }
 
 async function ensurePostgresDb(client) {
@@ -164,6 +180,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         storage: DATABASE_URL ? 'postgres' : 'json-file',
+        postgresSsl: DATABASE_URL ? getDatabaseSslMode() : null,
         dataDir: DATABASE_URL ? null : DATA_DIR
       });
       return;
@@ -183,6 +200,7 @@ const server = http.createServer(async (req, res) => {
 
     serveStatic(req, res);
   } catch (error) {
+    console.error(error);
     sendJson(res, 500, { ok: false, error: error.message });
   }
 });
