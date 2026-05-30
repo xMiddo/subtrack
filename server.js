@@ -61,9 +61,14 @@ function writeDb(state) {
 
 function getSql() {
   if (!DATABASE_URL) return null;
+  const databaseUrl = parseDatabaseUrl();
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL must be a valid Postgres URL that starts with postgres:// or postgresql://');
+  }
+
   if (!sql) {
     const postgres = require('postgres');
-    sql = postgres(DATABASE_URL, {
+    sql = postgres(databaseUrl.toString(), {
       max: 3,
       ssl: getDatabaseSslMode()
     });
@@ -75,15 +80,42 @@ function getDatabaseSslMode() {
   if (/^(require|true)$/i.test(DATABASE_SSL)) return 'require';
   if (/^(disable|false)$/i.test(DATABASE_SSL)) return false;
 
-  let host = '';
-  try {
-    host = new URL(DATABASE_URL).hostname;
-  } catch (error) {
-    return false;
-  }
+  const databaseUrl = parseDatabaseUrl();
+  if (!databaseUrl) return false;
+  const host = databaseUrl.hostname;
 
   if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.railway.internal')) return false;
   return 'require';
+}
+
+function parseDatabaseUrl() {
+  try {
+    const databaseUrl = new URL(DATABASE_URL);
+    if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) return null;
+    return databaseUrl;
+  } catch (error) {
+    return null;
+  }
+}
+
+function getDatabaseStatus() {
+  if (!DATABASE_URL) return { configured: false };
+
+  const databaseUrl = parseDatabaseUrl();
+  if (!databaseUrl) {
+    return {
+      configured: true,
+      valid: false,
+      message: 'DATABASE_URL must start with postgres:// or postgresql://'
+    };
+  }
+
+  return {
+    configured: true,
+    valid: true,
+    host: databaseUrl.hostname,
+    ssl: getDatabaseSslMode()
+  };
 }
 
 async function ensurePostgresDb(client) {
@@ -180,7 +212,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         storage: DATABASE_URL ? 'postgres' : 'json-file',
-        postgresSsl: DATABASE_URL ? getDatabaseSslMode() : null,
+        database: getDatabaseStatus(),
         dataDir: DATABASE_URL ? null : DATA_DIR
       });
       return;
