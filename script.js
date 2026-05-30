@@ -20,6 +20,7 @@ let visibleCalendarMonth = today.getMonth();
 let backendState = null;
 let appReady = false;
 let backendError = '';
+let serverSession = null;
 
 function emptyBackendState() {
   return {
@@ -54,6 +55,18 @@ async function loadBackendState() {
   } catch (error) {
     backendState = null;
     backendError = error.message || `${stateUrl} could not be reached`;
+  }
+}
+
+async function loadSession() {
+  if (!BACKEND_CONFIG.enabled) return;
+  try {
+    const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/session`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Session unavailable');
+    const session = await response.json();
+    serverSession = session.authenticated ? { username: session.username, role: session.role } : null;
+  } catch (error) {
+    serverSession = null;
   }
 }
 
@@ -126,14 +139,20 @@ function saveAccounts(accounts) {
 }
 
 function getSession() {
+  if (BACKEND_CONFIG.enabled) return serverSession;
   return JSON.parse(localStorage.getItem(STORAGE_KEYS.session) || 'null');
 }
 
 function setSession(account) {
+  serverSession = { username: account.username, role: account.role };
   localStorage.setItem(STORAGE_KEYS.session, JSON.stringify({ username: account.username, role: account.role }));
 }
 
-function logout() {
+async function logout() {
+  if (BACKEND_CONFIG.enabled) {
+    await fetch(`${BACKEND_CONFIG.apiBaseUrl}/logout`, { method: 'POST' }).catch(() => {});
+    serverSession = null;
+  }
   localStorage.removeItem(STORAGE_KEYS.session);
   window.location.href = 'login.html';
 }
@@ -145,16 +164,27 @@ async function login(event) {
   const error = document.getElementById('loginError');
   if (requireReadyMessage(error)) return;
   if (requireSharedStorage(error)) return;
-  const account = getAccounts().find(item => item.username === username && item.password === password);
 
-  if (!account) {
-    error.textContent = 'Incorrect username or password.';
-    error.classList.remove('hidden');
+  if (BACKEND_CONFIG.enabled) {
+    const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      error.textContent = result.error || 'Login failed.';
+      error.classList.remove('hidden');
+      return;
+    }
+    setSession(result.account);
+    window.location.href = result.account.role === 'admin' ? 'admin.html' : 'dashboard.html';
     return;
   }
 
-  if (account.disabled) {
-    error.textContent = 'This account is disabled. Contact an admin.';
+  const account = getAccounts().find(item => item.username === username && item.password === password);
+  if (!account || account.disabled) {
+    error.textContent = account?.disabled ? 'This account is disabled. Contact an admin.' : 'Incorrect username or password.';
     error.classList.remove('hidden');
     return;
   }
@@ -203,8 +233,8 @@ async function addAccount(event) {
   if (requireSharedStorage(message)) return;
   const accounts = getAccounts();
 
-  if (username.length < 3 || password.length < 4) {
-    showMessage(message, 'Username must be 3+ characters and password must be 4+ characters.', true);
+  if (username.length < 3 || password.length < 8) {
+    showMessage(message, 'Username must be 3+ characters and password must be 8+ characters.', true);
     return;
   }
 
@@ -271,6 +301,7 @@ function deleteAccount(username) {
 function renderAccounts() {
   const tbody = document.getElementById('accountsTable');
   if (!tbody) return;
+  renderSignupAccess();
   const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
   const accounts = getAccounts().filter(account => {
     if (!search) return true;
@@ -360,8 +391,8 @@ function resetUserPassword(event) {
     return;
   }
 
-  if (password.length < 4) {
-    showMessage(message, 'Password must be at least 4 characters.', true);
+  if (password.length < 8) {
+    showMessage(message, 'Password must be at least 8 characters.', true);
     return;
   }
 
@@ -371,6 +402,96 @@ function resetUserPassword(event) {
   event.target.reset();
   document.getElementById('resetUsernameLabel').value = '';
   showMessage(message, `Password reset for ${username}.`, false);
+}
+
+async function createInvite(event) {
+  event.preventDefault();
+  const username = document.getElementById('inviteUsername').value.trim();
+  const email = document.getElementById('inviteEmail').value.trim();
+  const role = document.getElementById('inviteRole').value;
+  const message = document.getElementById('inviteMessage');
+  const linkInput = document.getElementById('inviteLink');
+
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/invites`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email, role })
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    showMessage(message, result.error || 'Invite could not be created.', true);
+    return;
+  }
+
+  const inviteUrl = `${location.origin}${location.pathname.replace(/admin\.html$/, 'signup.html')}?token=${encodeURIComponent(result.invite.token)}`;
+  linkInput.value = inviteUrl;
+  linkInput.classList.remove('hidden');
+  await navigator.clipboard?.writeText(inviteUrl).catch(() => {});
+  event.target.reset();
+  showMessage(message, 'Invite link created and copied.', false);
+  await loadBackendState();
+  renderAccounts();
+}
+
+function saveSignupAccess(event) {
+  event.preventDefault();
+  const message = document.getElementById('signupAccessMessage');
+  backendState.publicSignup = Boolean(document.getElementById('publicSignupEnabled').checked);
+  persistBackendState()
+    .then(() => showMessage(message, backendState.publicSignup ? 'Public signup enabled.' : 'Public signup disabled.', false))
+    .catch(() => showMessage(message, 'Signup access could not be saved.', true));
+}
+
+function renderSignupAccess() {
+  const checkbox = document.getElementById('publicSignupEnabled');
+  if (!checkbox || !usingBackend()) return;
+  checkbox.checked = Boolean(backendState.publicSignup);
+}
+
+async function signup(event) {
+  event.preventDefault();
+  const message = document.getElementById('signupMessage');
+  const payload = {
+    token: document.getElementById('signupToken').value,
+    username: document.getElementById('signupUsername').value.trim(),
+    email: document.getElementById('signupEmail').value.trim(),
+    password: document.getElementById('signupPassword').value
+  };
+
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    showMessage(message, result.error || 'Account could not be created.', true);
+    return;
+  }
+
+  setSession(result.account);
+  window.location.href = result.account.role === 'admin' ? 'admin.html' : 'dashboard.html';
+}
+
+async function renderSignupForm() {
+  const tokenInput = document.getElementById('signupToken');
+  if (!tokenInput || !usingBackend()) return;
+
+  const token = new URLSearchParams(location.search).get('token') || '';
+  tokenInput.value = token;
+  if (!token) return;
+
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/invite?token=${encodeURIComponent(token)}`);
+  const result = await response.json().catch(() => ({}));
+  const invite = response.ok ? result.invite : null;
+  if (invite) {
+    document.getElementById('signupUsername').value = invite.username;
+    document.getElementById('signupEmail').value = invite.email;
+    document.getElementById('signupUsername').readOnly = true;
+    document.getElementById('signupEmail').readOnly = true;
+  }
 }
 
 async function requestPasswordReset(event) {
@@ -944,6 +1065,7 @@ function renderDashboard() {
   `).join('') || `<tr><td colspan="7">${emptyTableHtml}</td></tr>`;
 
   renderDueSoon(subscriptions);
+  renderUpcomingBills(subscriptions);
   renderSavings(savings, billableSubscriptions);
   renderCategoryChart(billableSubscriptions);
   renderSpendingHistory();
@@ -990,6 +1112,51 @@ function renderDueSoon(subscriptions) {
       <strong>${sub.daysUntil === 0 ? 'Today' : `${sub.daysUntil}d`} - $${Number(sub.cost).toFixed(2)}</strong>
     </div>
   `).join('') || '<p class="muted compact">No bills due in the next 7 days.</p>';
+}
+
+function getUpcomingBills(subscriptions, days) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + days);
+
+  return subscriptions
+    .filter(isBillable)
+    .map(sub => {
+      const nextDate = getNextOccurrence(sub, start);
+      return { ...sub, nextDate, daysUntil: daysBetween(start, nextDate) };
+    })
+    .filter(sub => sub.nextDate && sub.nextDate <= end && sub.daysUntil >= 0)
+    .sort((a, b) => a.nextDate - b.nextDate || Number(b.cost) - Number(a.cost));
+}
+
+function renderUpcomingBills(subscriptions) {
+  const container = document.getElementById('upcomingBills');
+  if (!container) return;
+
+  const windows = [7, 14, 30];
+  container.innerHTML = windows.map(days => {
+    const bills = getUpcomingBills(subscriptions, days);
+    return `
+      <section class="upcoming-window">
+        <h3>Next ${days} days</h3>
+        <div class="history-list">
+          ${bills.map(sub => `
+            <div class="history-item">
+              <div>
+                <strong>${escapeHtml(sub.name)}</strong>
+                <span>${escapeHtml(sub.category)} - ${escapeHtml(formatBillingCycle(sub))}</span>
+              </div>
+              <div>
+                <strong>$${Number(sub.cost).toFixed(2)}</strong>
+                <span>${sub.daysUntil === 0 ? 'Today' : `${sub.daysUntil} days`} - ${escapeHtml(formatDate(sub.nextDate.toISOString().slice(0, 10)))}</span>
+              </div>
+            </div>
+          `).join('') || '<p class="muted compact">No bills in this window.</p>'}
+        </div>
+      </section>
+    `;
+  }).join('');
 }
 
 function daysBetween(start, end) {
@@ -1375,11 +1542,28 @@ function saveReminderEmail(event) {
   showMessage(message, email ? 'Reminder email saved.' : 'Reminder email cleared.', false);
 }
 
-function changePassword(event) {
+async function changePassword(event) {
   event.preventDefault();
   const currentPassword = document.getElementById('currentPassword').value;
   const updatedPassword = document.getElementById('updatedPassword').value;
   const message = document.getElementById('passwordMessage');
+
+  if (BACKEND_CONFIG.enabled) {
+    const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/change-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, updatedPassword })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showMessage(message, result.error || 'Password could not be updated.', true);
+      return;
+    }
+    event.target.reset();
+    showMessage(message, 'Password updated.', false);
+    return;
+  }
+
   const session = getSession();
   const accounts = getAccounts();
   const account = accounts.find(item => item.username === session?.username);
@@ -1389,8 +1573,8 @@ function changePassword(event) {
     return;
   }
 
-  if (updatedPassword.length < 4) {
-    showMessage(message, 'New password must be at least 4 characters.', true);
+  if (updatedPassword.length < 8) {
+    showMessage(message, 'New password must be at least 8 characters.', true);
     return;
   }
 
@@ -1524,6 +1708,7 @@ function escapeJs(value) {
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadBackendState();
+  await loadSession();
   appReady = true;
   const backendMessageTarget = document.getElementById('loginError') || document.getElementById('accountMessage') || document.getElementById('forgotMessage');
   if (requireSharedStorage(backendMessageTarget)) return;
@@ -1538,5 +1723,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     requireLogin(['admin']);
     applyTheme();
     renderAccounts();
+  }
+  if (document.body.dataset.page === 'signup') {
+    renderSignupForm();
   }
 });

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign Up | SubTrack</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-body" data-page="signup">
+  <header class="navbar transparent">
+    <a href="index.html" class="logo">SubTrack</a>
+    <nav>
+      <a href="login.html">Log In</a>
+    </nav>
+  </header>
+
+  <main class="login-wrap">
+    <form class="login-card" onsubmit="signup(event)">
+      <p class="tag">Create account</p>
+      <h1>Sign up</h1>
+      <input id="signupToken" type="hidden" />
+      <label for="signupUsername">Username</label>
+      <input id="signupUsername" type="text" placeholder="username" required />
+      <label for="signupEmail">Email</label>
+      <input id="signupEmail" type="email" placeholder="you@example.com" required />
+      <label for="signupPassword">Password</label>
+      <input id="signupPassword" type="password" minlength="8" placeholder="minimum 8 characters" required />
+      <p id="signupMessage" class="message hidden"></p>
+      <button class="btn full" type="submit">Create Account</button>
+      <p class="hint">Already have an account? <a href="login.html">Log in</a></p>
+    </form>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

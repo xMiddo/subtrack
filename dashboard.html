@@ -11,6 +11,7 @@
     <a href="index.html" class="logo">SubTrack</a>
     <a href="#" class="active" data-section-link="overview" onclick="showSection('overview')">Dashboard</a>
     <a href="#" data-section-link="subscriptions" onclick="showSection('subscriptions')">Subscriptions</a>
+    <a href="#" data-section-link="upcoming" onclick="showSection('upcoming')">Upcoming Bills</a>
     <a href="#" data-section-link="calendar" onclick="showSection('calendar')">Calendar</a>
     <a href="#" data-section-link="savings" onclick="showSection('savings')">Savings</a>
     <a href="#" data-section-link="settings" onclick="showSection('settings')">Settings</a>
@@ -104,6 +105,19 @@
           <p id="importMessage" class="message hidden"></p>
         </div>
       </section>
+    </section>
+
+    <section id="upcoming" class="dash-section hidden">
+      <div class="card table-card">
+        <div class="table-head">
+          <div>
+            <h2>Upcoming Bills</h2>
+            <p class="muted">Renewals grouped by the next 7, 14, and 30 days.</p>
+          </div>
+          <button class="btn small" onclick="showSection('subscriptions')">+ Add Bill</button>
+        </div>
+        <div id="upcomingBills" class="upcoming-grid"></div>
+      </div>
     </section>
 
     <section id="subscriptions" class="dash-section hidden">
@@ -233,7 +247,7 @@
             <label for="currentPassword">Current Password</label>
             <input id="currentPassword" type="password" required />
             <label for="updatedPassword">New Password</label>
-            <input id="updatedPassword" type="password" minlength="4" required />
+            <input id="updatedPassword" type="password" minlength="8" required />
             <p id="passwordMessage" class="message hidden"></p>
             <button class="btn" type="submit">Update Password</button>
           </form>

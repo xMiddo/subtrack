@@ -43,9 +43,9 @@ npm start
 
 The app uses `process.env.PORT` automatically, which most hosting providers set for you.
 
-## Supabase Database
+## Shared Database
 
-For shared data that survives redeploys, create a Supabase project and copy the Postgres connection string.
+For shared data that survives redeploys, create a Postgres database and copy the connection string.
 
 On your host, add this environment variable:
 
@@ -53,7 +53,19 @@ On your host, add this environment variable:
 DATABASE_URL=your_supabase_postgres_connection_string
 ```
 
-When `DATABASE_URL` is set, SubTrack stores data in Supabase/Postgres. When it is not set, SubTrack falls back to `data/db.json` for local testing.
+When `DATABASE_URL` is set, SubTrack stores data in Postgres. When it is not set, SubTrack falls back to `data/db.json` for local testing.
+
+For Railway Postgres with an internal `.railway.internal` host, SSL is disabled automatically. For proxy hosts such as `zephyr.proxy.rlwy.net`, SSL is required automatically. You can override this with:
+
+```text
+DATABASE_SSL=false
+```
+
+or:
+
+```text
+PGSSLMODE=disable
+```
 
 You do not need to manually create tables. The server creates this table on first run:
 
@@ -73,6 +85,17 @@ Start Command: npm start
 Environment Variable: DATABASE_URL=...
 ```
 
+## Email Reminders
+
+SubTrack queues reminder emails automatically when a user has an email address and a subscription reminder is due. To actually send those emails through Resend, add:
+
+```text
+RESEND_API_KEY=your_resend_api_key
+REMINDER_FROM_EMAIL=SubTrack <reminders@yourdomain.com>
+```
+
+Without those variables, reminder attempts are stored in the app state's `emailQueue`.
+
 ## Important
 
-This backend stores passwords as plain text because it is intentionally simple and dependency-free. Before using it with real private data, add proper password hashing, HTTPS-only hosting, and environment-based admin credentials.
+Passwords are hashed with PBKDF2 before storage. Existing plain-text passwords are migrated the next time the account logs in or is saved. Before using it with real private data, keep HTTPS-only hosting enabled and change the default admin password.
