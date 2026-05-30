@@ -18,6 +18,7 @@ const today = new Date();
 let visibleCalendarYear = today.getFullYear();
 let visibleCalendarMonth = today.getMonth();
 let backendState = null;
+let appReady = false;
 
 function emptyBackendState() {
   return {
@@ -43,6 +44,15 @@ async function loadBackendState() {
   } catch (error) {
     backendState = null;
   }
+}
+
+function requireReadyMessage(element) {
+  if (appReady) return false;
+  if (element) {
+    element.textContent = 'Still connecting. Try again in a moment.';
+    element.classList.remove('hidden');
+  }
+  return true;
 }
 
 function persistBackendState() {
@@ -105,6 +115,7 @@ function login(event) {
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   const error = document.getElementById('loginError');
+  if (requireReadyMessage(error)) return;
   const account = getAccounts().find(item => item.username === username && item.password === password);
 
   if (!account) {
@@ -1469,7 +1480,9 @@ function escapeJs(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadBackendState();
+  appReady = true;
   getAccounts();
   if (getSession()) applyTheme();
   if (document.body.dataset.page === 'dashboard') {
