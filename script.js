@@ -206,6 +206,29 @@ async function login(event) {
   window.location.href = account.role === 'admin' ? 'admin.html' : 'dashboard.html';
 }
 
+async function goToAdmin(event) {
+  event.preventDefault();
+  const error = document.getElementById('loginError');
+  if (requireReadyMessage(error)) return;
+
+  await loadSession();
+  if (serverSession?.role === 'admin') {
+    window.location.href = 'admin.html';
+    return;
+  }
+
+  if (error) {
+    error.textContent = 'Admin access required. Log in with an admin account first.';
+    error.classList.remove('hidden');
+  } else {
+    alert('Admin access required. Log in with an admin account first.');
+  }
+}
+
+async function goToAdminFromLogin(event) {
+  return goToAdmin(event);
+}
+
 function requireLogin(allowedRoles = ['user', 'admin']) {
   const session = getSession();
   if (!session || !allowedRoles.includes(session.role)) {
@@ -218,8 +241,11 @@ function requireLogin(allowedRoles = ['user', 'admin']) {
   });
 
   const adminLink = document.getElementById('adminLink');
-  if (adminLink && session.role !== 'admin') adminLink.classList.add('hidden');
+  if (adminLink) {
+    adminLink.classList.toggle('hidden', session.role !== 'admin');
+  }
 
+  document.body.classList.remove('auth-pending');
   return session;
 }
 
@@ -491,6 +517,17 @@ async function renderSignupForm() {
     document.getElementById('signupEmail').value = invite.email;
     document.getElementById('signupUsername').readOnly = true;
     document.getElementById('signupEmail').readOnly = true;
+  }
+}
+
+function renderLoginPageMessage() {
+  const error = document.getElementById('loginError');
+  if (!error) return;
+
+  const errorCode = new URLSearchParams(location.search).get('error');
+  if (errorCode === 'admin') {
+    error.textContent = 'Admin access required. Log in with an admin account first.';
+    error.classList.remove('hidden');
   }
 }
 
@@ -1727,4 +1764,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (document.body.dataset.page === 'signup') {
     renderSignupForm();
   }
+  renderLoginPageMessage();
 });

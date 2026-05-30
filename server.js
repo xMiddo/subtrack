@@ -349,6 +349,15 @@ function serveStatic(req, res) {
   const requestedPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
   const filePath = path.normalize(path.join(ROOT, requestedPath));
 
+  if (requestedPath === '/admin.html') {
+    const session = getSession(req);
+    if (!session || session.role !== 'admin') {
+      res.writeHead(302, { Location: '/login.html?error=admin' });
+      res.end();
+      return;
+    }
+  }
+
   if (!filePath.startsWith(ROOT) || filePath.includes(`${path.sep}data${path.sep}`)) {
     res.writeHead(403);
     res.end('Forbidden');
