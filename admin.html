@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Panel | SubTrack</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="admin">
+  <aside class="sidebar">
+    <a href="index.html" class="logo">SubTrack</a>
+    <a href="dashboard.html">Dashboard</a>
+    <a href="admin.html" class="active">Admin Panel</a>
+    <a href="#" onclick="logout()">Log Out</a>
+  </aside>
+
+  <main class="dashboard">
+    <div class="dash-top">
+      <div>
+        <p class="tag">Admin: <span data-current-user></span></p>
+        <h1>Account access</h1>
+      </div>
+      <a class="btn ghost" href="dashboard.html">Go to Dashboard</a>
+    </div>
+
+    <section class="dashboard-grid">
+      <div class="card form-card">
+        <h2>Create Account</h2>
+        <form onsubmit="addAccount(event)" class="stack-form">
+          <label for="newUsername">Username</label>
+          <input id="newUsername" type="text" placeholder="newuser" required />
+          <label for="newEmail">Email</label>
+          <input id="newEmail" type="email" placeholder="user@example.com" required />
+          <label for="newPassword">Password</label>
+          <input id="newPassword" type="password" placeholder="minimum 4 characters" required />
+          <label for="newRole">Role</label>
+          <select id="newRole">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <p id="accountMessage" class="message hidden"></p>
+          <button class="btn" type="submit">Create Account</button>
+        </form>
+      </div>
+
+      <div class="card table-card">
+        <div class="table-head">
+          <h2>Allowed Accounts</h2>
+          <div class="table-controls admin-controls">
+            <input id="userSearch" type="search" placeholder="Search users" oninput="renderAccounts()" />
+            <button class="btn ghost small-btn" type="button" onclick="exportUsers()">Export Users</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Last Login</th><th>Actions</th></tr></thead>
+          <tbody id="accountsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="dashboard-grid lower-grid">
+      <div class="card form-card">
+        <h2>Reset Password</h2>
+        <form onsubmit="resetUserPassword(event)" class="stack-form">
+          <input id="resetUsername" type="hidden" />
+          <label for="resetUsernameLabel">Username</label>
+          <input id="resetUsernameLabel" type="text" placeholder="Choose an account" disabled />
+          <label for="resetPassword">New Password</label>
+          <input id="resetPassword" type="password" minlength="4" placeholder="minimum 4 characters" required />
+          <p id="resetMessage" class="message hidden"></p>
+          <button class="btn" type="submit">Reset Password</button>
+        </form>
+      </div>
+
+      <div class="card table-card">
+        <h2>Audit Log</h2>
+        <div id="auditLog" class="history-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

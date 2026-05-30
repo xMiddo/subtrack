@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login | SubTrack</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-body">
+  <header class="navbar transparent">
+    <a href="index.html" class="logo">SubTrack</a>
+    <nav>
+      <a href="info.html">Info</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+  </header>
+
+  <main class="login-wrap">
+    <form class="login-card" onsubmit="login(event)">
+      <p class="tag">Welcome back</p>
+      <h1>Log in</h1>
+      <label for="username">Username</label>
+      <input id="username" type="text" placeholder="username" required />
+      <label for="password">Password</label>
+      <input id="password" type="password" placeholder="Password" required />
+      <p id="loginError" class="message error hidden"></p>
+      <button class="btn full" type="submit">Log In</button>
+    </form>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

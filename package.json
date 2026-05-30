@@ -1,0 +1,14 @@
+{
+  "name": "subtrack",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

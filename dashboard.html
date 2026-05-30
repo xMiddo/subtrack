@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard | SubTrack</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="dashboard">
+  <aside class="sidebar">
+    <a href="index.html" class="logo">SubTrack</a>
+    <a href="#" class="active" data-section-link="overview" onclick="showSection('overview')">Dashboard</a>
+    <a href="#" data-section-link="subscriptions" onclick="showSection('subscriptions')">Subscriptions</a>
+    <a href="#" data-section-link="calendar" onclick="showSection('calendar')">Calendar</a>
+    <a href="#" data-section-link="savings" onclick="showSection('savings')">Savings</a>
+    <a href="#" data-section-link="settings" onclick="showSection('settings')">Settings</a>
+    <a href="admin.html" id="adminLink">Admin Panel</a>
+    <a href="#" onclick="logout()">Log Out</a>
+  </aside>
+
+  <main class="dashboard">
+    <div class="dash-top">
+      <div>
+        <p class="tag">Logged in as <span data-current-user></span></p>
+        <h1>Your subscriptions</h1>
+      </div>
+      <div class="top-actions">
+        <button id="themeToggleButton" class="icon-btn" type="button" onclick="toggleTheme()" aria-label="Toggle dark mode" title="Toggle dark mode">☾</button>
+        <button class="btn" onclick="showSection('subscriptions')">+ Add Subscription</button>
+      </div>
+    </div>
+
+    <section id="overview" class="dash-section">
+      <section class="stats">
+        <div class="card stat"><span>Monthly Spend</span><strong id="monthlySpend">$0.00</strong></div>
+        <div class="card stat"><span>Annual Spend</span><strong id="annualSpend">$0.00</strong></div>
+        <div class="card stat"><span>Subscriptions</span><strong id="subCount">0</strong></div>
+        <div class="card stat"><span>Potential Savings</span><strong id="potentialSavings">$0/yr</strong></div>
+        <div class="card stat"><span id="budgetLabel">Spending Budget</span><strong id="budgetStatus">$0.00</strong></div>
+        <div class="card stat"><span>Due This Month</span><strong id="dueThisMonth">$0.00</strong></div>
+      </section>
+
+      <section class="dashboard-grid">
+        <div class="card table-card">
+          <div class="table-head">
+            <h2>Active Subscriptions</h2>
+            <div class="table-controls">
+              <input id="subSearch" type="search" placeholder="Search subscriptions" oninput="renderDashboard()" />
+              <select id="categoryFilter" onchange="renderDashboard()">
+                <option value="all">All categories</option>
+              </select>
+              <select id="sortSubs" onchange="renderDashboard()">
+                <option value="date">Next bill</option>
+                <option value="cost-desc">Cost high to low</option>
+                <option value="cost-asc">Cost low to high</option>
+                <option value="name">Name A-Z</option>
+                <option value="category">Category</option>
+              </select>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>Name</th><th>Category</th><th>Cost</th><th>Next Bill</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody id="subsTable"></tbody>
+          </table>
+        </div>
+
+        <div class="card insight">
+          <h2>Due Soon</h2>
+          <div id="dueSoonList" class="mini-list"></div>
+          <h2 class="mt">Savings Insight</h2>
+          <p id="savingsInsight">Add subscriptions to see where you could save.</p>
+          <button class="btn full" onclick="showSection('savings')">View Savings Plan</button>
+        </div>
+      </section>
+
+      <section class="dashboard-grid lower-grid">
+        <div class="card">
+          <h2>Category Spending</h2>
+          <div id="categoryChart" class="chart-list"></div>
+        </div>
+
+        <div class="card">
+          <h2>Spending History</h2>
+          <div id="spendingHistory" class="history-list"></div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid lower-grid">
+        <div class="card">
+          <h2>Price Change Log</h2>
+          <div id="priceChangeLog" class="history-list"></div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid lower-grid">
+        <div class="card">
+          <h2>Quick Tools</h2>
+          <div class="tool-stack">
+            <button class="btn full" onclick="exportSubscriptions()">Export CSV</button>
+            <label for="csvImport" class="btn ghost full import-label">Import CSV</label>
+            <input id="csvImport" class="hidden" type="file" accept=".csv,text/csv" onchange="importSubscriptions(event)" />
+            <button class="btn ghost full" onclick="showSection('settings')">Account Settings</button>
+          </div>
+          <p id="importMessage" class="message hidden"></p>
+        </div>
+      </section>
+    </section>
+
+    <section id="subscriptions" class="dash-section hidden">
+      <div class="card form-card">
+        <h2 id="subscriptionFormTitle">Add Subscription</h2>
+        <form onsubmit="addSubscription(event)" class="stack-form">
+          <input id="editingSubId" type="hidden" />
+          <label for="subName">Subscription Name</label>
+          <input id="subName" type="text" placeholder="Canva" required />
+          <label for="subCategory">Category</label>
+          <select id="subCategory" required>
+            <option value="Streaming">Streaming</option>
+            <option value="Software">Software</option>
+            <option value="Music">Music</option>
+            <option value="Fitness">Fitness</option>
+            <option value="Gaming">Gaming</option>
+            <option value="Cloud">Cloud</option>
+            <option value="News">News</option>
+            <option value="Other">Other</option>
+          </select>
+          <label for="subCost">Monthly Cost</label>
+          <input id="subCost" type="number" step="0.01" min="0" placeholder="12.99" required />
+          <label for="subBillingCycle">Billing Cycle</label>
+          <select id="subBillingCycle" onchange="toggleCustomBillingCycle()">
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Bi-weekly</option>
+            <option value="1">Monthly</option>
+            <option value="2">Every 2 months</option>
+            <option value="3">Every 3 months</option>
+            <option value="6">Every 6 months</option>
+            <option value="12">Annually</option>
+            <option value="custom">Custom months</option>
+          </select>
+          <div id="customBillingWrap" class="hidden">
+            <label for="subBillingInterval">Bill Every</label>
+            <input id="subBillingInterval" type="number" min="1" step="1" placeholder="Number of months" />
+          </div>
+          <label for="subDate">Next Bill Date</label>
+          <input id="subDate" type="date" required />
+          <label for="subStatus">Status</label>
+          <select id="subStatus">
+            <option value="Active">Active</option>
+            <option value="Review">Review</option>
+            <option value="Cancel Soon">Cancel Soon</option>
+            <option value="Paused">Paused</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+          <label for="subReminder">Reminder</label>
+          <select id="subReminder">
+            <option value="0">No reminder</option>
+            <option value="1">1 day before</option>
+            <option value="3">3 days before</option>
+            <option value="7">7 days before</option>
+            <option value="14">14 days before</option>
+          </select>
+          <label for="subPayment">Payment Method</label>
+          <input id="subPayment" type="text" placeholder="Visa ending 1234" />
+          <label for="subNotes">Notes</label>
+          <textarea id="subNotes" rows="4" placeholder="Cancellation link, account email, plan details"></textarea>
+          <div class="form-actions">
+            <button class="btn" type="submit" id="saveSubButton">Save Subscription</button>
+            <button class="btn ghost hidden" type="button" id="cancelEditButton" onclick="resetSubscriptionForm()">Cancel Edit</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="calendar" class="dash-section hidden">
+      <div class="card calendar-card">
+        <div class="calendar-head">
+          <div>
+            <h2>Billing Calendar</h2>
+            <p class="muted">Subscriptions are automatically placed here based on the Next Bill Date you choose.</p>
+          </div>
+          <button class="btn small" onclick="showSection('subscriptions')">+ Add Bill</button>
+        </div>
+        <div class="calendar-toolbar">
+          <button class="btn ghost small-btn" type="button" onclick="changeCalendarMonth(-1)">Previous</button>
+          <div id="calendarMonthTitle" class="calendar-title"></div>
+          <button class="btn ghost small-btn" type="button" onclick="changeCalendarMonth(1)">Next</button>
+          <button class="btn small-btn" type="button" onclick="goToCurrentMonth()">Today</button>
+        </div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+      </div>
+
+      <div class="card table-card calendar-list-card">
+        <h2>Upcoming Billing Dates</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Subscription</th><th>Cost</th><th>Status</th></tr></thead>
+          <tbody id="calendarTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="savings" class="dash-section hidden">
+      <div class="card">
+        <h2>Savings Plan</h2>
+        <div id="savingsPlan" class="savings-plan"></div>
+      </div>
+    </section>
+
+    <section id="settings" class="dash-section hidden">
+      <section class="dashboard-grid">
+        <div class="card form-card">
+          <h2>Budget</h2>
+          <form onsubmit="saveBudget(event)" class="stack-form">
+            <label for="monthlyBudget">Monthly Subscription Budget</label>
+            <input id="monthlyBudget" type="number" min="0" step="0.01" placeholder="150.00" />
+            <p id="budgetMessage" class="message hidden"></p>
+            <button class="btn" type="submit">Save Budget</button>
+          </form>
+        </div>
+
+        <div class="card form-card">
+          <h2>Reminder Email</h2>
+          <form onsubmit="saveReminderEmail(event)" class="stack-form">
+            <label for="accountEmail">Email Address</label>
+            <input id="accountEmail" type="email" placeholder="you@example.com" />
+            <p id="emailMessage" class="message hidden"></p>
+            <button class="btn" type="submit">Save Email</button>
+          </form>
+        </div>
+
+        <div class="card form-card">
+          <h2>Change Password</h2>
+          <form onsubmit="changePassword(event)" class="stack-form">
+            <label for="currentPassword">Current Password</label>
+            <input id="currentPassword" type="password" required />
+            <label for="updatedPassword">New Password</label>
+            <input id="updatedPassword" type="password" minlength="4" required />
+            <p id="passwordMessage" class="message hidden"></p>
+            <button class="btn" type="submit">Update Password</button>
+          </form>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

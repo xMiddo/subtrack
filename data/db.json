@@ -1,0 +1,18 @@
+{
+  "accounts": [
+    {
+      "username": "admin",
+      "email": "",
+      "password": "admin123",
+      "role": "admin",
+      "disabled": false,
+      "createdAt": "2026-05-30T00:00:00.000Z",
+      "lastLoginAt": ""
+    }
+  ],
+  "subscriptions": {},
+  "settings": {},
+  "history": {},
+  "audit": [],
+  "reminderSent": []
+}
