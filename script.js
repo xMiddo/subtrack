@@ -19,6 +19,7 @@ let visibleCalendarYear = today.getFullYear();
 let visibleCalendarMonth = today.getMonth();
 let backendState = null;
 let appReady = false;
+let backendError = '';
 
 function emptyBackendState() {
   return {
@@ -41,8 +42,10 @@ async function loadBackendState() {
     const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/state`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Backend unavailable');
     backendState = { ...emptyBackendState(), ...await response.json() };
+    backendError = '';
   } catch (error) {
     backendState = null;
+    backendError = error.message || 'Backend unavailable';
   }
 }
 
@@ -55,13 +58,25 @@ function requireReadyMessage(element) {
   return true;
 }
 
-function persistBackendState() {
-  if (!usingBackend()) return;
-  fetch(`${BACKEND_CONFIG.apiBaseUrl}/state`, {
+function requireSharedStorage(element) {
+  if (!BACKEND_CONFIG.enabled || usingBackend()) return false;
+  const message = 'Shared database is not connected. Data would only save on this device, so login is paused until the backend is fixed.';
+  if (element) {
+    element.textContent = backendError ? `${message} (${backendError})` : message;
+    element.classList.remove('hidden');
+  }
+  return true;
+}
+
+async function persistBackendState() {
+  if (!usingBackend()) return true;
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/state`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(backendState)
-  }).catch(() => {});
+  });
+  if (!response.ok) throw new Error('Shared database save failed');
+  return true;
 }
 
 function getAccounts() {
@@ -69,9 +84,14 @@ function getAccounts() {
   const hasAdmin = saved.some(account => account.username === DEFAULT_ADMIN.username);
   if (!hasAdmin) {
     saved.unshift(DEFAULT_ADMIN);
-    saveAccounts(saved);
-  } else {
-    saveAccounts(saved);
+    if (usingBackend()) {
+      backendState.accounts = saved;
+      persistBackendState().catch(error => {
+        backendError = error.message;
+      });
+    } else {
+      localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(saved));
+    }
   }
   return saved;
 }
@@ -91,10 +111,10 @@ function ensureAccountShape(account) {
 function saveAccounts(accounts) {
   if (usingBackend()) {
     backendState.accounts = accounts;
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(accounts));
+  return Promise.resolve(true);
 }
 
 function getSession() {
@@ -110,12 +130,13 @@ function logout() {
   window.location.href = 'login.html';
 }
 
-function login(event) {
+async function login(event) {
   event.preventDefault();
   const username = document.getElementById('username').value.trim();
   const password = document.getElementById('password').value;
   const error = document.getElementById('loginError');
   if (requireReadyMessage(error)) return;
+  if (requireSharedStorage(error)) return;
   const account = getAccounts().find(item => item.username === username && item.password === password);
 
   if (!account) {
@@ -132,11 +153,17 @@ function login(event) {
 
   const accounts = getAccounts();
   const savedAccount = accounts.find(item => item.username === account.username);
-  if (savedAccount) {
-    savedAccount.lastLoginAt = new Date().toISOString();
-    saveAccounts(accounts);
+  try {
+    if (savedAccount) {
+      savedAccount.lastLoginAt = new Date().toISOString();
+      await saveAccounts(accounts);
+    }
+    await writeAudit('login', account.username, 'User logged in.');
+  } catch (saveError) {
+    error.textContent = 'Login found your account, but the shared database could not save the session update. Try again.';
+    error.classList.remove('hidden');
+    return;
   }
-  writeAudit('login', account.username, 'User logged in.');
   setSession(account);
   window.location.href = account.role === 'admin' ? 'admin.html' : 'dashboard.html';
 }
@@ -158,13 +185,14 @@ function requireLogin(allowedRoles = ['user', 'admin']) {
   return session;
 }
 
-function addAccount(event) {
+async function addAccount(event) {
   event.preventDefault();
   const username = document.getElementById('newUsername').value.trim();
   const email = document.getElementById('newEmail').value.trim();
   const password = document.getElementById('newPassword').value;
   const role = document.getElementById('newRole').value;
   const message = document.getElementById('accountMessage');
+  if (requireSharedStorage(message)) return;
   const accounts = getAccounts();
 
   if (username.length < 3 || password.length < 4) {
@@ -183,18 +211,24 @@ function addAccount(event) {
   }
 
   accounts.push({ username, email, password, role, disabled: false, createdAt: new Date().toISOString(), lastLoginAt: '' });
-  saveAccounts(accounts);
-  if (usingBackend()) {
-    backendState.subscriptions[username] = [];
-    backendState.settings[username] = { monthlyBudget: 0, darkMode: false };
-    backendState.history[username] = [];
-    persistBackendState();
-  } else {
-    localStorage.setItem(subscriptionKeyFor(username), JSON.stringify([]));
-    localStorage.setItem(settingsKeyFor(username), JSON.stringify({ monthlyBudget: 0 }));
-    localStorage.setItem(historyKeyFor(username), JSON.stringify([]));
+  try {
+    if (usingBackend()) {
+      backendState.accounts = accounts;
+      backendState.subscriptions[username] = [];
+      backendState.settings[username] = { monthlyBudget: 0, darkMode: false };
+      backendState.history[username] = [];
+      await persistBackendState();
+    } else {
+      await saveAccounts(accounts);
+      localStorage.setItem(subscriptionKeyFor(username), JSON.stringify([]));
+      localStorage.setItem(settingsKeyFor(username), JSON.stringify({ monthlyBudget: 0 }));
+      localStorage.setItem(historyKeyFor(username), JSON.stringify([]));
+    }
+    await writeAudit('create_account', username, `Created ${role} account.`);
+  } catch (saveError) {
+    showMessage(message, 'Account could not be saved to the shared database. Try again.', true);
+    return;
   }
-  writeAudit('create_account', username, `Created ${role} account.`);
   event.target.reset();
   showMessage(message, `Account created for ${username}.`, false);
   renderAccounts();
@@ -487,10 +521,10 @@ function saveSettings(settings) {
   if (usingBackend()) {
     const session = getSession();
     backendState.settings[session?.username || 'guest'] = settings;
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(getCurrentSettingsKey(), JSON.stringify(settings));
+  return Promise.resolve(true);
 }
 
 function applyTheme() {
@@ -526,10 +560,10 @@ function saveHistory(history) {
   if (usingBackend()) {
     const session = getSession();
     backendState.history[session?.username || 'guest'] = history;
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(getCurrentHistoryKey(), JSON.stringify(history));
+  return Promise.resolve(true);
 }
 
 function getAuditLog() {
@@ -540,10 +574,10 @@ function getAuditLog() {
 function saveAuditLog(entries) {
   if (usingBackend()) {
     backendState.audit = entries.slice(-100);
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(STORAGE_KEYS.audit, JSON.stringify(entries.slice(-100)));
+  return Promise.resolve(true);
 }
 
 function getSentReminders() {
@@ -554,13 +588,13 @@ function getSentReminders() {
 function saveSentReminders(entries) {
   if (usingBackend()) {
     backendState.reminderSent = entries.slice(-250);
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(STORAGE_KEYS.reminderSent, JSON.stringify(entries.slice(-250)));
+  return Promise.resolve(true);
 }
 
-function writeAudit(action, target, detail) {
+async function writeAudit(action, target, detail) {
   const session = getSession();
   const entries = getAuditLog();
   entries.push({
@@ -570,7 +604,7 @@ function writeAudit(action, target, detail) {
     actor: session?.username || target || 'system',
     createdAt: new Date().toISOString()
   });
-  saveAuditLog(entries);
+  return saveAuditLog(entries);
 }
 
 function getSubscriptions() {
@@ -600,10 +634,10 @@ function saveSubscriptions(subscriptions) {
   if (usingBackend()) {
     const session = getSession();
     backendState.subscriptions[session?.username || 'guest'] = subscriptions;
-    persistBackendState();
-    return;
+    return persistBackendState();
   }
   localStorage.setItem(getCurrentSubscriptionKey(), JSON.stringify(subscriptions));
+  return Promise.resolve(true);
 }
 
 function getSubscriptionsForUser(username) {
@@ -1483,6 +1517,8 @@ function escapeJs(value) {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadBackendState();
   appReady = true;
+  const backendMessageTarget = document.getElementById('loginError') || document.getElementById('accountMessage') || document.getElementById('forgotMessage');
+  if (requireSharedStorage(backendMessageTarget)) return;
   getAccounts();
   if (getSession()) applyTheme();
   if (document.body.dataset.page === 'dashboard') {

@@ -4,7 +4,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, 'data');
+const DATA_DIR = process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(ROOT, 'data');
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 const DATABASE_URL = process.env.DATABASE_URL || '';
 let sql = null;
@@ -161,7 +161,11 @@ function serveStatic(req, res) {
 const server = http.createServer(async (req, res) => {
   try {
     if (req.url === '/api/health') {
-      sendJson(res, 200, { ok: true });
+      sendJson(res, 200, {
+        ok: true,
+        storage: DATABASE_URL ? 'postgres' : 'json-file',
+        dataDir: DATABASE_URL ? null : DATA_DIR
+      });
       return;
     }
 
