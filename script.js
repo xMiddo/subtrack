@@ -38,14 +38,15 @@ function usingBackend() {
 
 async function loadBackendState() {
   if (!BACKEND_CONFIG.enabled) return;
+  const stateUrl = `${BACKEND_CONFIG.apiBaseUrl}/state`;
   try {
-    const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/state`, { cache: 'no-store' });
-    if (!response.ok) throw new Error('Backend unavailable');
+    const response = await fetch(stateUrl, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`${stateUrl} returned ${response.status}`);
     backendState = { ...emptyBackendState(), ...await response.json() };
     backendError = '';
   } catch (error) {
     backendState = null;
-    backendError = error.message || 'Backend unavailable';
+    backendError = error.message || `${stateUrl} could not be reached`;
   }
 }
 
