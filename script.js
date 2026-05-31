@@ -1095,27 +1095,45 @@ async function sendTestEmail(event) {
 
 function renderAnnouncementEditor() {
   const input = document.getElementById('announcementText');
+  const enabledInput = document.getElementById('announcementEnabled');
   if (!input || !usingBackend()) return;
   const active = (backendState.announcements || []).find(item => !item.expiresAt || new Date(item.expiresAt) > new Date());
   input.value = active?.message || '';
+  if (enabledInput) enabledInput.checked = Boolean(active?.message && active.enabled !== false);
+  previewAnnouncementToggle();
+}
+
+function previewAnnouncementToggle() {
+  const enabled = Boolean(document.getElementById('announcementEnabled')?.checked);
+  const status = document.getElementById('announcementStatus');
+  if (status) status.textContent = enabled ? 'Visible on dashboard' : 'Hidden from dashboard';
 }
 
 function saveAnnouncement(event) {
   event.preventDefault();
   const message = document.getElementById('announcementMessage');
   const text = document.getElementById('announcementText').value.trim();
-  backendState.announcements = text ? [{ message: text, createdAt: new Date().toISOString(), createdBy: getSession()?.username || 'admin' }] : [];
+  const enabled = Boolean(document.getElementById('announcementEnabled')?.checked);
+  backendState.announcements = text ? [{
+    message: text,
+    enabled,
+    createdAt: new Date().toISOString(),
+    createdBy: getSession()?.username || 'admin'
+  }] : [];
   persistBackendState()
     .then(() => {
-      writeAudit('announcement_update', 'all_users', text ? 'Published announcement.' : 'Cleared announcement.');
-      showMessage(message, text ? 'Announcement published.' : 'Announcement cleared.', false);
+      writeAudit('announcement_update', 'all_users', text ? `${enabled ? 'Enabled' : 'Saved hidden'} announcement.` : 'Cleared announcement.');
+      showMessage(message, text ? `Announcement ${enabled ? 'shown' : 'saved hidden'}.` : 'Announcement cleared.', false);
+      previewAnnouncementToggle();
     })
     .catch(() => showMessage(message, 'Announcement could not be saved.', true));
 }
 
 function clearAnnouncement() {
   const input = document.getElementById('announcementText');
+  const enabled = document.getElementById('announcementEnabled');
   if (input) input.value = '';
+  if (enabled) enabled.checked = false;
   saveAnnouncement({ preventDefault() {} });
 }
 
@@ -1643,8 +1661,13 @@ function renderDashboard() {
 function renderAnnouncementBanner() {
   const banner = document.getElementById('announcementBanner');
   if (!banner || !usingBackend()) return;
-  const active = (backendState.announcements || []).find(item => !item.expiresAt || new Date(item.expiresAt) > new Date());
-  banner.textContent = active?.message || '';
+  const active = (backendState.announcements || []).find(item => item.message && item.enabled !== false && (!item.expiresAt || new Date(item.expiresAt) > new Date()));
+  banner.innerHTML = active?.message ? `
+    <div>
+      <strong>Announcement</strong>
+      <span>${escapeHtml(active.message)}</span>
+    </div>
+  ` : '';
   banner.classList.toggle('hidden', !active?.message);
 }
 

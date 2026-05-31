@@ -209,10 +209,18 @@
       <div class="card form-card">
         <h2>Announcements</h2>
         <form onsubmit="saveAnnouncement(event)" class="stack-form">
+          <label class="setting-toggle" for="announcementEnabled">
+            <span>
+              <strong>Show announcement</strong>
+              <small id="announcementStatus">Hidden</small>
+            </span>
+            <input id="announcementEnabled" type="checkbox" onchange="previewAnnouncementToggle()" />
+            <span class="switch-track" aria-hidden="true"></span>
+          </label>
           <label for="announcementText">Dashboard Message</label>
           <textarea id="announcementText" rows="4" placeholder="Message for all users"></textarea>
           <p id="announcementMessage" class="message hidden"></p>
-          <button class="btn" type="submit">Publish Announcement</button>
+          <button class="btn" type="submit">Save Announcement</button>
           <button class="btn ghost" type="button" onclick="clearAnnouncement()">Clear Announcement</button>
         </form>
       </div>
