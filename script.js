@@ -124,7 +124,7 @@ function ensureAccountShape(account) {
     username: account.username,
     email: account.email || '',
     password: account.password,
-    role: account.role || 'user',
+    role: account.role === 'owner' ? 'owner' : (account.role === 'admin' ? 'admin' : 'user'),
     disabled: Boolean(account.disabled),
     createdAt: account.createdAt || new Date().toISOString(),
     lastLoginAt: account.lastLoginAt || '',
@@ -181,7 +181,7 @@ async function login(event) {
       return;
     }
     setSession(result.account);
-    window.location.href = result.account.role === 'admin' ? 'admin.html' : 'dashboard.html';
+    window.location.href = ['owner', 'admin'].includes(result.account.role) ? 'admin.html' : 'dashboard.html';
     return;
   }
 
@@ -206,7 +206,7 @@ async function login(event) {
     return;
   }
   setSession(account);
-  window.location.href = account.role === 'admin' ? 'admin.html' : 'dashboard.html';
+  window.location.href = ['owner', 'admin'].includes(account.role) ? 'admin.html' : 'dashboard.html';
 }
 
 async function goToAdmin(event) {
@@ -215,7 +215,7 @@ async function goToAdmin(event) {
   if (requireReadyMessage(error)) return;
 
   await loadSession();
-  if (serverSession?.role === 'admin') {
+  if (['owner', 'admin'].includes(serverSession?.role)) {
     window.location.href = 'admin.html';
     return;
   }
@@ -245,7 +245,7 @@ function requireLogin(allowedRoles = ['user', 'admin']) {
 
   const adminLink = document.getElementById('adminLink');
   if (adminLink) {
-    adminLink.classList.toggle('hidden', session.role !== 'admin');
+    adminLink.classList.toggle('hidden', !['owner', 'admin'].includes(session.role));
   }
 
   document.body.classList.remove('auth-pending');
@@ -346,6 +346,7 @@ function renderAccounts() {
         <select class="inline-select" onchange="changeUserRole('${escapeJs(account.username)}', this.value)" ${account.username === 'admin' ? 'disabled' : ''}>
           <option value="user" ${account.role === 'user' ? 'selected' : ''}>user</option>
           <option value="admin" ${account.role === 'admin' ? 'selected' : ''}>admin</option>
+          <option value="owner" ${account.role === 'owner' ? 'selected' : ''}>owner</option>
         </select>
       </td>
       <td data-label="Status"><span class="pill ${account.disabled ? 'danger-pill' : ''}">${account.disabled ? 'Disabled' : 'Enabled'}</span></td>
@@ -367,6 +368,7 @@ async function renderEmailStatus() {
 
   const health = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/health`).then(response => response.json()).catch(() => null);
   const emailReady = Boolean(health?.email?.configured);
+  const jobsReady = Boolean(health?.email?.scheduledJobsConfigured);
   const queue = (backendState.emailQueue || []).slice(-20).reverse();
   const counts = queue.reduce((totals, item) => {
     totals[item.status || 'queued'] = (totals[item.status || 'queued'] || 0) + 1;
@@ -375,6 +377,7 @@ async function renderEmailStatus() {
 
   container.innerHTML = `
     <p class="message ${emailReady ? 'success' : 'error'}">${emailReady ? 'Reminder email sending is configured.' : 'Reminder emails are queued only. Add RESEND_API_KEY and REMINDER_FROM_EMAIL to send.'}</p>
+    <p class="message ${jobsReady ? 'success' : 'error'}">${jobsReady ? 'Scheduled job endpoint is protected with CRON_SECRET.' : 'Set CRON_SECRET before wiring Railway scheduled jobs.'}</p>
     <div class="status-strip">
       <span><strong>${counts.sent || 0}</strong> sent</span>
       <span><strong>${counts.queued || 0}</strong> queued</span>
@@ -393,6 +396,18 @@ async function renderEmailStatus() {
       </div>
     `).join('') || '<p class="muted compact">No reminder emails have been queued yet.</p>'}
   `;
+}
+
+async function runDailyEmailJob() {
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/jobs/daily`, { method: 'POST' });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    alert(result.error || 'Daily job could not run.');
+    return;
+  }
+  await loadBackendState();
+  renderEmailStatus();
+  renderAuditLog();
 }
 
 function renderUserPreviewSelector() {
@@ -417,6 +432,11 @@ function renderUserPreview() {
   const billable = subscriptions.filter(isBillable);
   const monthly = billable.reduce((sum, sub) => sum + monthlyEquivalent(sub), 0);
   const dueSoon = getUpcomingBills(subscriptions, 30).slice(0, 5);
+  const categories = Object.entries(billable.reduce((groups, sub) => {
+    groups[sub.category] = (groups[sub.category] || 0) + monthlyEquivalent(sub);
+    return groups;
+  }, {})).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const flagged = getSavingsCandidates(billable).slice(0, 4);
 
   container.innerHTML = account ? `
     <div class="preview-stats">
@@ -425,6 +445,21 @@ function renderUserPreview() {
       <div><span>Budget</span><strong>$${Number(settings.monthlyBudget || 0).toFixed(2)}</strong></div>
     </div>
     <div class="history-list">
+      <h3>Top Categories</h3>
+      ${categories.map(([category, total]) => `
+        <div class="history-item">
+          <div><strong>${escapeHtml(category)}</strong><span>Monthly equivalent</span></div>
+          <div><strong>$${total.toFixed(2)}</strong><span>category spend</span></div>
+        </div>
+      `).join('') || '<p class="muted compact">No category spend yet.</p>'}
+      <h3>Flagged Items</h3>
+      ${flagged.map(sub => `
+        <div class="history-item">
+          <div><strong>${escapeHtml(sub.name)}</strong><span>${escapeHtml(sub.reason)}</span></div>
+          <div><strong>$${monthlyEquivalent(sub).toFixed(2)}</strong><span>monthly</span></div>
+        </div>
+      `).join('') || '<p class="muted compact">No savings flags for this user.</p>'}
+      <h3>Upcoming Bills</h3>
       ${dueSoon.map(sub => `
         <div class="history-item">
           <div>
@@ -444,7 +479,7 @@ function renderUserPreview() {
 function changeUserRole(username, role) {
   const session = getSession();
   if (username === 'admin') return;
-  if (session && session.username === username && role !== 'admin') {
+  if (session && session.username === username && !['owner', 'admin'].includes(role)) {
     alert('You cannot remove your own admin access while logged in.');
     renderAccounts();
     return;
@@ -597,7 +632,7 @@ async function signup(event) {
   }
 
   setSession(result.account);
-  window.location.href = result.account.role === 'admin' ? 'admin.html' : 'dashboard.html';
+  window.location.href = ['owner', 'admin'].includes(result.account.role) ? 'admin.html' : 'dashboard.html';
 }
 
 async function renderSignupForm() {
@@ -634,18 +669,6 @@ async function requestPasswordReset(event) {
   event.preventDefault();
   const email = document.getElementById('resetEmail').value.trim();
   const message = document.getElementById('forgotMessage');
-  const account = getAccounts().find(item => item.email && item.email.toLowerCase() === email.toLowerCase());
-
-  if (!account) {
-    showMessage(message, 'No account uses that email.', true);
-    return;
-  }
-
-  if (!BACKEND_CONFIG.enabled || !BACKEND_CONFIG.apiBaseUrl) {
-    showMessage(message, 'Email reset is ready for backend setup, but no email service is connected yet. Ask an admin to reset your password.', true);
-    writeAudit('password_reset_requested', account.username, 'Password reset requested before backend email setup.');
-    return;
-  }
 
   try {
     await fetch(`${BACKEND_CONFIG.apiBaseUrl}/password-reset`, {
@@ -654,10 +677,34 @@ async function requestPasswordReset(event) {
       body: JSON.stringify({ email })
     });
     showMessage(message, 'If that email exists, a reset link has been sent.', false);
-    writeAudit('password_reset_email', account.username, 'Password reset email requested.');
   } catch (error) {
     showMessage(message, 'The reset email could not be sent. Try again later.', true);
   }
+}
+
+function renderResetPasswordForm() {
+  const tokenInput = document.getElementById('resetToken');
+  if (!tokenInput) return;
+  tokenInput.value = new URLSearchParams(location.search).get('token') || '';
+}
+
+async function resetPasswordWithToken(event) {
+  event.preventDefault();
+  const message = document.getElementById('resetTokenMessage');
+  const token = document.getElementById('resetToken').value;
+  const password = document.getElementById('resetTokenPassword').value;
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, password })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showMessage(message, result.error || 'Password could not be reset.', true);
+    return;
+  }
+  event.target.reset();
+  showMessage(message, 'Password updated. You can log in now.', false);
 }
 
 async function queueReminderEmail(account, subscription, nextBillDate) {
@@ -1958,12 +2005,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderDashboard();
   }
   if (document.body.dataset.page === 'admin') {
-    requireLogin(['admin']);
+    requireLogin(['owner', 'admin']);
     applyTheme();
     renderAccounts();
   }
   if (document.body.dataset.page === 'signup') {
     renderSignupForm();
+  }
+  if (document.body.dataset.page === 'reset') {
+    renderResetPasswordForm();
   }
   renderLoginPageMessage();
   renderLoginSignupPrompt();

@@ -11,10 +11,11 @@ const DATABASE_URL = process.env.DATABASE_URL || '';
 const DATABASE_SSL = process.env.DATABASE_SSL || process.env.PGSSLMODE || '';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const REMINDER_FROM_EMAIL = process.env.REMINDER_FROM_EMAIL || '';
+const CRON_SECRET = process.env.CRON_SECRET || '';
+const SESSION_SECRET = process.env.SESSION_SECRET || 'subtrack-dev-session-secret';
 const SESSION_COOKIE = 'subtrack_session_id';
 const PASSWORD_ITERATIONS = 120000;
 let sql = null;
-const sessions = new Map();
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -35,7 +36,7 @@ function defaultState() {
         email: '',
         passwordHash: '4b84237520795f4b00d7096101ced3d31b177f61e15d1a2e223da5017b8f521fcbbb7c63a9ef6f9011456091a30578c0fcc4c19e2cfdfe511aecc18fbe40ba17',
         passwordSalt: 'fde93753e68f4867596eae54e4389c5e',
-        role: 'admin',
+        role: 'owner',
         disabled: false,
         createdAt: new Date().toISOString(),
         lastLoginAt: ''
@@ -47,6 +48,7 @@ function defaultState() {
     audit: [],
     reminderSent: [],
     invites: [],
+    passwordResets: [],
     publicSignup: false,
     emailQueue: []
   };
@@ -184,6 +186,41 @@ function sanitizeStateForClient(state, session = null) {
   return cleanState;
 }
 
+function stateForSessionWrite(incomingState, currentState, session) {
+  const incoming = { ...defaultState(), ...incomingState };
+  const current = { ...defaultState(), ...currentState };
+  if (!['owner', 'admin'].includes(session.role)) {
+    return {
+      ...current,
+      subscriptions: {
+        ...current.subscriptions,
+        [session.username]: incoming.subscriptions?.[session.username] || current.subscriptions?.[session.username] || []
+      },
+      settings: {
+        ...current.settings,
+        [session.username]: incoming.settings?.[session.username] || current.settings?.[session.username] || {}
+      },
+      history: {
+        ...current.history,
+        [session.username]: incoming.history?.[session.username] || current.history?.[session.username] || []
+      },
+      reminderSent: incoming.reminderSent || current.reminderSent || [],
+      audit: incoming.audit || current.audit || []
+    };
+  }
+
+  if (session.role === 'admin') {
+    const currentAccounts = new Map((current.accounts || []).map(account => [account.username, account]));
+    incoming.accounts = (incoming.accounts || []).map(account => {
+      const existing = currentAccounts.get(account.username);
+      if (existing?.role === 'owner') return existing;
+      return account.role === 'owner' ? { ...account, role: 'admin' } : account;
+    });
+  }
+
+  return incoming;
+}
+
 async function normalizeStateForStorage(state, currentState = defaultState()) {
   const mergedState = { ...defaultState(), ...state };
   const currentAccounts = new Map((currentState.accounts || []).map(account => [account.username, account]));
@@ -225,22 +262,37 @@ function parseCookies(req) {
 }
 
 function getSession(req) {
-  const sessionId = parseCookies(req)[SESSION_COOKIE];
-  if (!sessionId) return null;
-  return sessions.get(sessionId) || null;
+  const raw = parseCookies(req)[SESSION_COOKIE];
+  if (!raw) return null;
+  try {
+    const [encoded, signature] = raw.split('.');
+    const expected = signValue(encoded);
+    if (!signature || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+    const session = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    if (!session.expiresAt || new Date(session.expiresAt) < new Date()) return null;
+    return { username: session.username, role: session.role };
+  } catch (error) {
+    return null;
+  }
 }
 
 function setSessionCookie(req, res, session) {
-  const sessionId = crypto.randomBytes(32).toString('hex');
-  sessions.set(sessionId, session);
+  const payload = {
+    ...session,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sessionId = `${encoded}.${signValue(encoded)}`;
   const secure = isSecureRequest(req) ? '; Secure' : '';
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800${secure}`);
 }
 
 function clearSessionCookie(req, res) {
-  const sessionId = parseCookies(req)[SESSION_COOKIE];
-  if (sessionId) sessions.delete(sessionId);
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+function signValue(value) {
+  return crypto.createHmac('sha256', SESSION_SECRET).update(value).digest('base64url');
 }
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -278,7 +330,7 @@ function makeId() {
 
 function requireAdmin(req, res) {
   const session = getSession(req);
-  if (!session || session.role !== 'admin') {
+  if (!session || !['owner', 'admin'].includes(session.role)) {
     sendJson(res, 401, { ok: false, error: 'Admin access required' });
     return null;
   }
@@ -287,6 +339,10 @@ function requireAdmin(req, res) {
 
 function accountSession(account) {
   return { username: account.username, role: account.role || 'user' };
+}
+
+function isOwner(session) {
+  return session?.role === 'owner';
 }
 
 function appendAudit(state, action, target, detail, actor = 'system') {
@@ -306,6 +362,22 @@ function isSecureRequest(req) {
 }
 
 async function sendReminderEmail(message) {
+  return sendEmail({
+    to: message.email,
+    subject: `${message.subscription} renews ${message.nextBillDate}`,
+    html: `
+      <p>Hi ${escapeHtml(message.username)},</p>
+      <p>Your subscription <strong>${escapeHtml(message.subscription)}</strong> renews on <strong>${escapeHtml(message.nextBillDate)}</strong>.</p>
+      <p>Amount: <strong>$${Number(message.amount).toFixed(2)}</strong></p>
+    `
+  });
+}
+
+async function sendEmail({ to, subject, html }) {
+  if (!RESEND_API_KEY || !REMINDER_FROM_EMAIL) {
+    throw new Error('Email provider is not configured');
+  }
+
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -314,13 +386,9 @@ async function sendReminderEmail(message) {
     },
     body: JSON.stringify({
       from: REMINDER_FROM_EMAIL,
-      to: message.email,
-      subject: `${message.subscription} renews ${message.nextBillDate}`,
-      html: `
-        <p>Hi ${escapeHtml(message.username)},</p>
-        <p>Your subscription <strong>${escapeHtml(message.subscription)}</strong> renews on <strong>${escapeHtml(message.nextBillDate)}</strong>.</p>
-        <p>Amount: <strong>$${Number(message.amount).toFixed(2)}</strong></p>
-      `
+      to,
+      subject,
+      html
     })
   });
 
@@ -328,6 +396,138 @@ async function sendReminderEmail(message) {
     const text = await response.text();
     throw new Error(text || `Resend returned ${response.status}`);
   }
+}
+
+function parseLocalDate(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function addMonthsClamped(date, monthsToAdd) {
+  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + monthsToAdd, 1));
+  const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
+  target.setUTCDate(Math.min(date.getUTCDate(), lastDay));
+  return target;
+}
+
+function getNextOccurrence(sub, fromDate = new Date()) {
+  const start = parseLocalDate(sub.nextBillDate);
+  if (!start) return null;
+  const from = new Date(Date.UTC(fromDate.getUTCFullYear(), fromDate.getUTCMonth(), fromDate.getUTCDate()));
+  if (start >= from) return start;
+
+  if ((sub.billingIntervalUnit || 'months') === 'weeks') {
+    const intervalDays = Math.max(1, Number(sub.billingIntervalCount) || 1) * 7;
+    const cycles = Math.ceil((from - start) / (intervalDays * 24 * 60 * 60 * 1000));
+    const next = new Date(start);
+    next.setUTCDate(start.getUTCDate() + cycles * intervalDays);
+    return next;
+  }
+
+  const interval = Math.max(1, Number(sub.billingIntervalCount || sub.billingIntervalMonths) || 1);
+  const roughMonths = (from.getUTCFullYear() - start.getUTCFullYear()) * 12 + (from.getUTCMonth() - start.getUTCMonth());
+  let cycles = Math.max(0, Math.floor(roughMonths / interval));
+  let next = addMonthsClamped(start, cycles * interval);
+  while (next < from) {
+    cycles++;
+    next = addMonthsClamped(start, cycles * interval);
+  }
+  return next;
+}
+
+function daysBetween(start, end) {
+  if (!end) return Number.POSITIVE_INFINITY;
+  const startDay = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  return Math.round((end - startDay) / (24 * 60 * 60 * 1000));
+}
+
+function monthlyEquivalent(sub) {
+  const count = Math.max(1, Number(sub.billingIntervalCount || sub.billingIntervalMonths) || 1);
+  if ((sub.billingIntervalUnit || 'months') === 'weeks') return Number(sub.cost) * (52 / 12) / count;
+  return Number(sub.cost) / count;
+}
+
+function getMonthlyDue(subscriptions, year, monthIndex) {
+  return subscriptions.filter(isBillable).reduce((sum, sub) => {
+    const next = getNextOccurrence(sub, new Date(Date.UTC(year, monthIndex, 1)));
+    return next && next.getUTCFullYear() === year && next.getUTCMonth() === monthIndex ? sum + Number(sub.cost) : sum;
+  }, 0);
+}
+
+function isBillable(sub) {
+  return sub.status !== 'Paused' && sub.status !== 'Cancelled';
+}
+
+async function runDailyJobs(actor = 'system') {
+  const state = await readState();
+  const now = new Date();
+  const todayKey = now.toISOString().slice(0, 10);
+  const monthKey = todayKey.slice(0, 7);
+  const accounts = state.accounts || [];
+
+  for (const account of accounts) {
+    if (account.disabled || !account.email) continue;
+    const settings = { emailRemindersEnabled: true, defaultReminderDays: 7, monthlySummaryEmail: false, ...(state.settings?.[account.username] || {}) };
+    const subscriptions = (state.subscriptions?.[account.username] || []).filter(isBillable);
+
+    if (settings.emailRemindersEnabled !== false) {
+      for (const sub of subscriptions) {
+        const reminderDays = Number(sub.reminderDays || settings.defaultReminderDays || 0);
+        if (!reminderDays) continue;
+        const nextBill = getNextOccurrence(sub, now);
+        const billDate = nextBill ? nextBill.toISOString().slice(0, 10) : '';
+        const sentKey = `${account.username}:${sub.id}:${billDate}:${reminderDays}`;
+        if (daysBetween(now, nextBill) === reminderDays && !(state.reminderSent || []).includes(sentKey)) {
+          const message = {
+            id: makeId(),
+            username: account.username,
+            email: account.email,
+            subscription: sub.name,
+            amount: Number(sub.cost) || 0,
+            nextBillDate: billDate,
+            createdAt: new Date().toISOString(),
+            status: 'queued',
+            error: ''
+          };
+          try {
+            await sendReminderEmail(message);
+            message.status = 'sent';
+            message.sentAt = new Date().toISOString();
+          } catch (error) {
+            message.status = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
+            message.error = error.message;
+          }
+          state.emailQueue = [...(state.emailQueue || []), message].slice(-250);
+          state.reminderSent = [...(state.reminderSent || []), sentKey].slice(-500);
+          appendAudit(state, `scheduled_reminder_${message.status}`, account.username, `${sub.name} reminder ${message.status}.`, actor);
+        }
+      }
+    }
+
+    if (settings.monthlySummaryEmail && todayKey.endsWith('-01')) {
+      const summaryKey = `${account.username}:summary:${monthKey}`;
+      if (!(state.reminderSent || []).includes(summaryKey)) {
+        const monthly = subscriptions.reduce((sum, sub) => sum + monthlyEquivalent(sub), 0);
+        const due = getMonthlyDue(subscriptions, now.getUTCFullYear(), now.getUTCMonth());
+        try {
+          await sendEmail({
+            to: account.email,
+            subject: `SubTrack monthly summary for ${monthKey}`,
+            html: `<p>Hi ${escapeHtml(account.username)},</p><p>Your subscription average is <strong>$${monthly.toFixed(2)}/mo</strong>.</p><p>Bills due this month: <strong>$${due.toFixed(2)}</strong>.</p><p>Active subscriptions: <strong>${subscriptions.length}</strong>.</p>`
+          });
+          state.emailQueue = [...(state.emailQueue || []), { id: makeId(), username: account.username, email: account.email, subscription: 'Monthly summary', amount: due, nextBillDate: monthKey, createdAt: new Date().toISOString(), status: 'sent', sentAt: new Date().toISOString(), error: '' }].slice(-250);
+          appendAudit(state, 'monthly_summary_sent', account.username, `Monthly summary sent for ${monthKey}.`, actor);
+        } catch (error) {
+          state.emailQueue = [...(state.emailQueue || []), { id: makeId(), username: account.username, email: account.email, subscription: 'Monthly summary', amount: due, nextBillDate: monthKey, createdAt: new Date().toISOString(), status: RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued', error: error.message }].slice(-250);
+        }
+        state.reminderSent = [...(state.reminderSent || []), summaryKey].slice(-500);
+      }
+    }
+  }
+
+  await writeState(state);
+  return { ok: true, queued: (state.emailQueue || []).length };
 }
 
 function escapeHtml(value) {
@@ -364,7 +564,7 @@ function serveStatic(req, res) {
 
   if (requestedPath === '/admin.html') {
     const session = getSession(req);
-    if (!session || session.role !== 'admin') {
+    if (!session || !['owner', 'admin'].includes(session.role)) {
       res.writeHead(302, { Location: '/login.html?error=admin' });
       res.end();
       return;
@@ -400,7 +600,8 @@ const server = http.createServer(async (req, res) => {
         database: getDatabaseStatus(),
         email: {
           provider: 'resend',
-          configured: Boolean(RESEND_API_KEY && REMINDER_FROM_EMAIL)
+          configured: Boolean(RESEND_API_KEY && REMINDER_FROM_EMAIL),
+          scheduledJobsConfigured: Boolean(CRON_SECRET)
         },
         dataDir: DATABASE_URL ? null : DATA_DIR
       });
@@ -457,6 +658,65 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.url === '/api/password-reset' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const email = String(body.email || '').trim().toLowerCase();
+      const state = await readState();
+      const account = (state.accounts || []).find(item => item.email && item.email.toLowerCase() === email);
+      if (account) {
+        const token = makeId();
+        state.passwordResets = [...(state.passwordResets || []).filter(item => !item.usedAt), {
+          token,
+          username: account.username,
+          email: account.email,
+          createdAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          usedAt: ''
+        }].slice(-50);
+        const resetUrl = `${isSecureRequest(req) ? 'https' : 'http'}://${req.headers.host}/reset.html?token=${encodeURIComponent(token)}`;
+        try {
+          await sendEmail({
+            to: account.email,
+            subject: 'Reset your SubTrack password',
+            html: `<p>Hi ${escapeHtml(account.username)},</p><p>Use this link to reset your SubTrack password. It expires in one hour:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`
+          });
+          appendAudit(state, 'password_reset_email', account.username, 'Sent password reset email.', 'system');
+        } catch (error) {
+          appendAudit(state, 'password_reset_queued', account.username, `Password reset link created: ${resetUrl}`, 'system');
+        }
+        await writeState(state);
+      }
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.url === '/api/reset-password' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req) || '{}');
+      const token = String(body.token || '').trim();
+      const password = String(body.password || '');
+      const state = await readState();
+      const reset = (state.passwordResets || []).find(item => item.token === token && !item.usedAt && new Date(item.expiresAt) > new Date());
+      if (!reset) {
+        sendJson(res, 400, { ok: false, error: 'Reset link is invalid or expired.' });
+        return;
+      }
+      if (password.length < 8) {
+        sendJson(res, 400, { ok: false, error: 'Password must be at least 8 characters.' });
+        return;
+      }
+      const account = (state.accounts || []).find(item => item.username === reset.username);
+      if (!account) {
+        sendJson(res, 404, { ok: false, error: 'Account not found.' });
+        return;
+      }
+      account.password = password;
+      reset.usedAt = new Date().toISOString();
+      appendAudit(state, 'password_reset', account.username, 'Password reset completed.', account.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.url === '/api/change-password' && req.method === 'POST') {
       const session = getSession(req);
       if (!session) {
@@ -495,7 +755,8 @@ const server = http.createServer(async (req, res) => {
       const state = await readState();
       const username = String(body.username || '').trim();
       const email = String(body.email || '').trim();
-      const role = body.role === 'admin' ? 'admin' : 'user';
+      const requestedRole = ['owner', 'admin', 'user'].includes(body.role) ? body.role : 'user';
+      const role = requestedRole === 'owner' && !isOwner(session) ? 'admin' : requestedRole;
 
       if (username.length < 3 || !email.includes('@')) {
         sendJson(res, 400, { ok: false, error: 'Invite needs a username and valid email.' });
@@ -518,6 +779,18 @@ const server = http.createServer(async (req, res) => {
       };
       state.invites = [...(state.invites || []).filter(item => !item.usedAt), invite].slice(-50);
       appendAudit(state, 'create_invite', username, `Created ${role} invite for ${email}.`, session.username);
+      const inviteUrl = `${isSecureRequest(req) ? 'https' : 'http'}://${req.headers.host}/signup.html?token=${encodeURIComponent(invite.token)}`;
+      try {
+        await sendEmail({
+          to: email,
+          subject: 'You have been invited to SubTrack',
+          html: `<p>You have been invited to SubTrack as <strong>${escapeHtml(role)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Create your account</a></p><p>${escapeHtml(inviteUrl)}</p>`
+        });
+        invite.emailStatus = 'sent';
+      } catch (error) {
+        invite.emailStatus = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
+        invite.emailError = error.message;
+      }
       await writeState(state);
       sendJson(res, 200, { ok: true, invite });
       return;
@@ -568,12 +841,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.url === '/api/state' && req.method === 'PUT') {
-      if (!getSession(req)) {
+      const session = getSession(req);
+      if (!session) {
         sendJson(res, 401, { ok: false, error: 'Login required' });
         return;
       }
       const body = await readBody(req);
-      await writeState(JSON.parse(body || '{}'));
+      const currentState = await readState();
+      await writeState(stateForSessionWrite(JSON.parse(body || '{}'), currentState, session));
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -614,6 +889,21 @@ const server = http.createServer(async (req, res) => {
       appendAudit(state, `reminder_${message.status}`, session.username, `${message.subscription} reminder ${message.status}.`, session.username);
       await writeState(state);
       sendJson(res, 200, { ok: true, status: message.status });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/jobs/daily' && req.method === 'POST') {
+      const providedSecret = req.headers['x-cron-secret'] || requestUrl.searchParams.get('secret') || '';
+      const session = getSession(req);
+      if (CRON_SECRET && providedSecret !== CRON_SECRET && !isOwner(session)) {
+        sendJson(res, 401, { ok: false, error: 'Cron secret required' });
+        return;
+      }
+      if (!CRON_SECRET && !isOwner(session)) {
+        sendJson(res, 401, { ok: false, error: 'Owner access required when CRON_SECRET is not set' });
+        return;
+      }
+      sendJson(res, 200, await runDailyJobs(session?.username || 'cron'));
       return;
     }
 

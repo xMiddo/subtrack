@@ -37,6 +37,7 @@
           <select id="newRole">
             <option value="user">User</option>
             <option value="admin">Admin</option>
+            <option value="owner">Owner</option>
           </select>
           <p id="accountMessage" class="message hidden"></p>
           <button class="btn" type="submit">Create Account</button>
@@ -54,6 +55,7 @@
           <select id="inviteRole">
             <option value="user">User</option>
             <option value="admin">Admin</option>
+            <option value="owner">Owner</option>
           </select>
           <p id="inviteMessage" class="message hidden"></p>
           <input id="inviteLink" type="text" class="hidden" readonly />
@@ -126,7 +128,10 @@
       <div class="card table-card">
         <div class="table-head">
           <h2>Email Status</h2>
-          <button class="btn ghost small-btn" type="button" onclick="renderEmailStatus()">Refresh</button>
+          <div class="form-actions">
+            <button class="btn ghost small-btn" type="button" onclick="runDailyEmailJob()">Run Daily Job</button>
+            <button class="btn ghost small-btn" type="button" onclick="renderEmailStatus()">Refresh</button>
+          </div>
         </div>
         <div id="emailStatus" class="history-list"></div>
       </div>

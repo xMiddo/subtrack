@@ -92,9 +92,19 @@ SubTrack queues reminder emails automatically when a user has an email address a
 ```text
 RESEND_API_KEY=your_resend_api_key
 REMINDER_FROM_EMAIL=SubTrack <reminders@yourdomain.com>
+CRON_SECRET=long_random_secret
+SESSION_SECRET=another_long_random_secret
 ```
 
 Without those variables, reminder attempts are stored in the app state's `emailQueue`.
+
+To send scheduled reminders and monthly summaries, configure a Railway scheduled job to call:
+
+```text
+POST https://your-app.up.railway.app/api/jobs/daily?secret=your_CRON_SECRET
+```
+
+Run it once per day. The endpoint sends due renewal reminders and first-of-month summary emails for users who enabled monthly summaries.
 
 ## Important
 

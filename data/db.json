@@ -3,7 +3,7 @@
     {
       "username": "admin",
       "email": "",
-      "role": "admin",
+      "role": "owner",
       "disabled": false,
       "createdAt": "2026-05-30T00:00:00.000Z",
       "lastLoginAt": "",
@@ -17,6 +17,7 @@
   "audit": [],
   "reminderSent": [],
   "invites": [],
+  "passwordResets": [],
   "publicSignup": false,
   "emailQueue": []
 }

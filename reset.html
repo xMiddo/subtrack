@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reset Password | SubTrack</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="login-body" data-page="reset">
+  <header class="navbar transparent">
+    <a href="index.html" class="logo">SubTrack</a>
+    <nav>
+      <a href="login.html">Login</a>
+    </nav>
+  </header>
+
+  <main class="login-wrap">
+    <form class="login-card" onsubmit="resetPasswordWithToken(event)">
+      <p class="tag">Account recovery</p>
+      <h1>Reset password</h1>
+      <input id="resetToken" type="hidden" />
+      <label for="resetTokenPassword">New Password</label>
+      <input id="resetTokenPassword" type="password" minlength="8" placeholder="minimum 8 characters" required />
+      <p id="resetTokenMessage" class="message hidden"></p>
+      <button class="btn full" type="submit">Update Password</button>
+      <p class="hint"><a href="login.html">Back to login</a></p>
+    </form>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
