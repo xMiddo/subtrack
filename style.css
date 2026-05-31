@@ -562,6 +562,98 @@ input[type="search"]:focus {
   margin-top: 24px;
 }
 
+body[data-page="admin"] .dashboard {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .7), rgba(245, 247, 251, 0) 280px),
+    #f5f7fb;
+}
+
+body[data-page="admin"] .dashboard h1 {
+  font-size: clamp(34px, 4vw, 52px);
+}
+
+body[data-page="admin"] .dashboard-grid {
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  align-items: start;
+}
+
+body[data-page="admin"] .card {
+  border-radius: 18px;
+  padding: 24px;
+}
+
+body[data-page="admin"] .form-card {
+  max-width: none;
+}
+
+body[data-page="admin"] .table-card {
+  min-width: 0;
+}
+
+body[data-page="admin"] .table-head {
+  padding-bottom: 4px;
+}
+
+.admin-ops-grid {
+  grid-template-columns: minmax(280px, .85fr) minmax(280px, .85fr) minmax(380px, 1.3fr);
+}
+
+.admin-section {
+  overflow: hidden;
+}
+
+.admin-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #edf0f5;
+}
+
+.admin-section-head h2 {
+  margin-bottom: 6px;
+}
+
+.admin-section-body {
+  transition: opacity .18s ease, max-height .22s ease, margin .18s ease;
+}
+
+.admin-section.collapsed .admin-section-body {
+  max-height: 0;
+  margin-top: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.audit-section {
+  background:
+    linear-gradient(180deg, rgba(238, 240, 255, .55), rgba(255, 255, 255, 0) 155px),
+    var(--surface);
+}
+
+.audit-list {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.dark-mode[data-page="admin"] .dashboard {
+  background:
+    linear-gradient(180deg, rgba(24, 34, 53, .72), rgba(15, 23, 42, 0) 280px),
+    #0f172a;
+}
+
+.dark-mode .admin-section-head {
+  border-color: #334155;
+}
+
+.dark-mode .audit-section {
+  background:
+    linear-gradient(180deg, rgba(38, 50, 74, .72), rgba(24, 34, 53, 0) 155px),
+    #182235;
+}
+
 .table-card {
   overflow-x: auto;
 }
@@ -594,8 +686,8 @@ input[type="search"]:focus {
 }
 
 .audit-controls {
-  grid-template-columns: minmax(180px, 1fr) minmax(150px, .7fr) minmax(150px, .7fr);
-  margin-top: 14px;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(140px, .8fr) minmax(140px, .8fr) minmax(130px, .7fr);
+  margin-top: 16px;
   width: 100%;
 }
 

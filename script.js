@@ -124,7 +124,7 @@ function ensureAccountShape(account) {
     username: account.username,
     email: account.email || '',
     password: account.password,
-    role: account.role === 'owner' ? 'owner' : (account.role === 'admin' ? 'admin' : 'user'),
+    role: account.username === 'admin' ? 'owner' : (account.role === 'owner' ? 'owner' : (account.role === 'admin' ? 'admin' : 'user')),
     disabled: Boolean(account.disabled),
     createdAt: account.createdAt || new Date().toISOString(),
     lastLoginAt: account.lastLoginAt || '',
@@ -868,14 +868,28 @@ function renderAuditLog() {
   const search = (document.getElementById('auditSearch')?.value || '').trim().toLowerCase();
   const action = document.getElementById('auditActionFilter')?.value || 'all';
   const user = document.getElementById('auditUserFilter')?.value || 'all';
+  const dateRange = document.getElementById('auditDateFilter')?.value || 'all';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const entries = getAuditLog().filter(entry => {
     const matchesAction = action === 'all' || entry.action === action;
     const matchesUser = user === 'all' || entry.actor === user || entry.target === user;
+    const createdAt = new Date(entry.createdAt);
+    const matchesDate = dateRange === 'all'
+      || (dateRange === 'today' && createdAt >= startOfToday)
+      || (!Number.isNaN(Number(dateRange)) && createdAt >= new Date(now.getTime() - Number(dateRange) * 24 * 60 * 60 * 1000));
     const haystack = [entry.action, entry.detail, entry.actor, entry.target, entry.createdAt].join(' ').toLowerCase();
-    return matchesAction && matchesUser && (!search || haystack.includes(search));
-  }).slice(-40).reverse();
+    return matchesAction && matchesUser && matchesDate && (!search || haystack.includes(search));
+  });
+  const visibleEntries = entries.slice(-40).reverse();
+  const summary = document.getElementById('auditSummary');
+  if (summary) {
+    const total = getAuditLog().length;
+    const limited = entries.length > visibleEntries.length ? ` Showing latest ${visibleEntries.length}.` : '';
+    summary.textContent = `${entries.length} of ${total} events match the current filters.${limited}`;
+  }
 
-  container.innerHTML = entries.map(entry => `
+  container.innerHTML = visibleEntries.map(entry => `
     <div class="history-item">
       <div>
         <strong>${escapeHtml(entry.action.replace(/_/g, ' '))}</strong>
@@ -887,6 +901,29 @@ function renderAuditLog() {
       </div>
     </div>
   `).join('') || '<p class="muted compact">No admin activity yet.</p>';
+}
+
+function resetAuditFilters() {
+  const search = document.getElementById('auditSearch');
+  const action = document.getElementById('auditActionFilter');
+  const user = document.getElementById('auditUserFilter');
+  const date = document.getElementById('auditDateFilter');
+  if (search) search.value = '';
+  if (action) action.value = 'all';
+  if (user) user.value = 'all';
+  if (date) date.value = 'all';
+  renderAuditLog();
+}
+
+function toggleAdminSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+  const isCollapsed = section.classList.toggle('collapsed');
+  const button = section.querySelector('.collapse-btn');
+  if (button) {
+    button.textContent = isCollapsed ? 'Expand' : 'Collapse';
+    button.setAttribute('aria-expanded', String(!isCollapsed));
+  }
 }
 
 function renderAuditFilters() {

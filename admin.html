@@ -10,7 +10,7 @@
   <aside class="sidebar">
     <a href="index.html" class="logo">SubTracked</a>
     <a href="dashboard.html">Dashboard</a>
-    <a href="admin.html" class="active">Admin Panel</a>
+    <a href="#" class="active" onclick="goToAdmin(event)">Admin Panel</a>
     <a href="#" onclick="logout()">Log Out</a>
   </aside>
 
@@ -78,7 +78,7 @@
       </div>
     </section>
 
-    <section class="dashboard-grid lower-grid">
+    <section class="dashboard-grid lower-grid admin-ops-grid">
       <div class="card form-card">
         <h2>Reset Password</h2>
         <form onsubmit="resetUserPassword(event)" class="stack-form">
@@ -109,18 +109,35 @@
         </form>
       </div>
 
-      <div class="card table-card">
-        <h2>Audit Log</h2>
-        <div class="table-controls audit-controls">
-          <input id="auditSearch" type="search" placeholder="Search audit log" oninput="renderAuditLog()" />
-          <select id="auditActionFilter" onchange="renderAuditLog()">
-            <option value="all">All actions</option>
-          </select>
-          <select id="auditUserFilter" onchange="renderAuditLog()">
-            <option value="all">All users</option>
-          </select>
+      <div class="card table-card admin-section audit-section" id="auditPanel">
+        <div class="admin-section-head">
+          <div>
+            <h2>Audit Log</h2>
+            <p id="auditSummary" class="muted compact">Filter and review admin activity.</p>
+          </div>
+          <div class="form-actions">
+            <button class="btn ghost small-btn" type="button" onclick="resetAuditFilters()">Reset</button>
+            <button class="btn ghost small-btn collapse-btn" type="button" onclick="toggleAdminSection('auditPanel')">Collapse</button>
+          </div>
         </div>
-        <div id="auditLog" class="history-list"></div>
+        <div class="admin-section-body">
+          <div class="table-controls audit-controls">
+            <input id="auditSearch" type="search" placeholder="Search audit log" oninput="renderAuditLog()" />
+            <select id="auditActionFilter" onchange="renderAuditLog()">
+              <option value="all">All actions</option>
+            </select>
+            <select id="auditUserFilter" onchange="renderAuditLog()">
+              <option value="all">All users</option>
+            </select>
+            <select id="auditDateFilter" onchange="renderAuditLog()">
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+          </div>
+          <div id="auditLog" class="history-list audit-list"></div>
+        </div>
       </div>
     </section>
 

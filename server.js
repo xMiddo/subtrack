@@ -64,7 +64,7 @@ function ensureDb() {
 
 function readDb() {
   ensureDb();
-  return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+  return ensureDefaultAdminOwner(JSON.parse(fs.readFileSync(DB_PATH, 'utf8')));
 }
 
 function writeDb(state) {
@@ -153,7 +153,7 @@ async function readState() {
 
   await ensurePostgresDb(client);
   const rows = await client`select data from app_state where id = 'main'`;
-  return { ...defaultState(), ...(rows[0]?.data || {}) };
+  return ensureDefaultAdminOwner({ ...defaultState(), ...(rows[0]?.data || {}) });
 }
 
 async function writeState(state) {
@@ -232,7 +232,7 @@ async function normalizeStateForStorage(state, currentState = defaultState()) {
       ...currentAccount,
       ...account,
       email: account.email || '',
-      role: account.role || 'user',
+      role: account.username === 'admin' ? 'owner' : (account.role || 'user'),
       disabled: Boolean(account.disabled),
       createdAt: account.createdAt || currentAccount.createdAt || new Date().toISOString(),
       lastLoginAt: account.lastLoginAt || currentAccount.lastLoginAt || ''
@@ -252,6 +252,14 @@ async function normalizeStateForStorage(state, currentState = defaultState()) {
     return normalized;
   }));
   return mergedState;
+}
+
+function ensureDefaultAdminOwner(state) {
+  const nextState = { ...defaultState(), ...state };
+  nextState.accounts = (nextState.accounts || []).map(account => (
+    account.username === 'admin' ? { ...account, role: 'owner' } : account
+  ));
+  return nextState;
 }
 
 function parseCookies(req) {
