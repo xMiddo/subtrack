@@ -50,7 +50,8 @@ function defaultState() {
     invites: [],
     passwordResets: [],
     publicSignup: false,
-    emailQueue: []
+    emailQueue: [],
+    announcements: []
   };
 }
 
@@ -179,10 +180,11 @@ function sanitizeStateForClient(state, session = null) {
     const { password, passwordHash, passwordSalt, ...safeAccount } = account;
     return safeAccount;
   });
-  cleanState.invites = session?.role === 'admin'
+  cleanState.invites = ['owner', 'admin'].includes(session?.role)
     ? (cleanState.invites || []).map(({ token, ...invite }) => invite)
     : [];
-  cleanState.emailQueue = session?.role === 'admin' ? (cleanState.emailQueue || []) : [];
+  cleanState.emailQueue = ['owner', 'admin'].includes(session?.role) ? (cleanState.emailQueue || []) : [];
+  cleanState.passwordResets = [];
   return cleanState;
 }
 
@@ -355,6 +357,19 @@ function appendAudit(state, action, target, detail, actor = 'system') {
     createdAt: new Date().toISOString()
   });
   state.audit = state.audit.slice(-250);
+}
+
+function publicOrigin(req) {
+  return `${isSecureRequest(req) ? 'https' : 'http'}://${req.headers.host}`;
+}
+
+async function sendInviteEmail(req, invite) {
+  const inviteUrl = `${publicOrigin(req)}/signup.html?token=${encodeURIComponent(invite.token)}`;
+  await sendEmail({
+    to: invite.email,
+    subject: 'You have been invited to SubTracked',
+    html: `<p>You have been invited to SubTracked as <strong>${escapeHtml(invite.role)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Create your account</a></p><p>${escapeHtml(inviteUrl)}</p>`
+  });
 }
 
 function isSecureRequest(req) {
@@ -630,8 +645,21 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse(await readBody(req) || '{}');
       const state = await readState();
       const account = (state.accounts || []).find(item => item.username === String(body.username || '').trim());
+      if (account?.lockedUntil && new Date(account.lockedUntil) > new Date()) {
+        appendAudit(state, 'blocked_login', account.username, 'Login blocked by temporary account lock.', account.username);
+        await writeState(state);
+        sendJson(res, 423, { ok: false, error: 'Account is temporarily locked. Contact an admin.' });
+        return;
+      }
 
       if (!account || !(await verifyPassword(account, String(body.password || '')))) {
+        if (account) {
+          account.failedLoginCount = Number(account.failedLoginCount || 0) + 1;
+          account.lastFailedLoginAt = new Date().toISOString();
+          if (account.failedLoginCount >= 5) {
+            account.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          }
+        }
         appendAudit(state, 'failed_login', String(body.username || '').trim() || 'unknown', 'Failed login attempt.', String(body.username || '').trim() || 'unknown');
         await writeState(state);
         sendJson(res, 401, { ok: false, error: 'Incorrect username or password.' });
@@ -644,6 +672,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       account.lastLoginAt = new Date().toISOString();
+      account.failedLoginCount = 0;
+      account.lockedUntil = '';
       appendAudit(state, 'login', account.username, 'User logged in.', account.username);
       await migrateAccountPassword(state, account);
       if (!account.password) await writeState(state);
@@ -779,13 +809,8 @@ const server = http.createServer(async (req, res) => {
       };
       state.invites = [...(state.invites || []).filter(item => !item.usedAt), invite].slice(-50);
       appendAudit(state, 'create_invite', username, `Created ${role} invite for ${email}.`, session.username);
-      const inviteUrl = `${isSecureRequest(req) ? 'https' : 'http'}://${req.headers.host}/signup.html?token=${encodeURIComponent(invite.token)}`;
       try {
-        await sendEmail({
-          to: email,
-          subject: 'You have been invited to SubTracked',
-          html: `<p>You have been invited to SubTracked as <strong>${escapeHtml(role)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Create your account</a></p><p>${escapeHtml(inviteUrl)}</p>`
-        });
+        await sendInviteEmail(req, invite);
         invite.emailStatus = 'sent';
       } catch (error) {
         invite.emailStatus = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
@@ -793,6 +818,92 @@ const server = http.createServer(async (req, res) => {
       }
       await writeState(state);
       sendJson(res, 200, { ok: true, invite });
+      return;
+    }
+
+    if (req.url === '/api/admin/unlock-account' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const state = await readState();
+      const account = (state.accounts || []).find(item => item.username === String(body.username || ''));
+      if (!account) {
+        sendJson(res, 404, { ok: false, error: 'Account not found' });
+        return;
+      }
+      account.failedLoginCount = 0;
+      account.lockedUntil = '';
+      appendAudit(state, 'unlock_account', account.username, 'Unlocked account.', session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.url === '/api/admin/revoke-invite' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const state = await readState();
+      const invite = (state.invites || []).find(item => item.token === String(body.token || ''));
+      if (!invite) {
+        sendJson(res, 404, { ok: false, error: 'Invite not found' });
+        return;
+      }
+      invite.usedAt = invite.usedAt || new Date().toISOString();
+      invite.revokedAt = new Date().toISOString();
+      appendAudit(state, 'revoke_invite', invite.username, 'Revoked invite.', session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.url === '/api/admin/resend-invite' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const state = await readState();
+      const invite = (state.invites || []).find(item => item.token === String(body.token || '') && !item.usedAt);
+      if (!invite) {
+        sendJson(res, 404, { ok: false, error: 'Invite not found or already used' });
+        return;
+      }
+      try {
+        await sendInviteEmail(req, invite);
+        invite.emailStatus = 'sent';
+        invite.resentAt = new Date().toISOString();
+      } catch (error) {
+        invite.emailStatus = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
+        invite.emailError = error.message;
+      }
+      appendAudit(state, 'resend_invite', invite.username, `Invite email ${invite.emailStatus}.`, session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true, status: invite.emailStatus });
+      return;
+    }
+
+    if (req.url === '/api/admin/test-email' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const to = String(body.email || '').trim();
+      if (!to.includes('@')) {
+        sendJson(res, 400, { ok: false, error: 'Valid email required' });
+        return;
+      }
+      const state = await readState();
+      const message = { id: makeId(), username: session.username, email: to, subscription: 'Test email', amount: 0, nextBillDate: '', createdAt: new Date().toISOString(), status: 'queued', error: '' };
+      try {
+        await sendEmail({ to, subject: 'SubTracked test email', html: '<p>Your SubTracked email setup is working.</p>' });
+        message.status = 'sent';
+        message.sentAt = new Date().toISOString();
+      } catch (error) {
+        message.status = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
+        message.error = error.message;
+      }
+      state.emailQueue = [...(state.emailQueue || []), message].slice(-250);
+      appendAudit(state, 'test_email', to, `Test email ${message.status}.`, session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true, status: message.status });
       return;
     }
 

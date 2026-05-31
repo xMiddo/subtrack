@@ -8,7 +8,9 @@
       "createdAt": "2026-05-30T00:00:00.000Z",
       "lastLoginAt": "",
       "passwordHash": "4b84237520795f4b00d7096101ced3d31b177f61e15d1a2e223da5017b8f521fcbbb7c63a9ef6f9011456091a30578c0fcc4c19e2cfdfe511aecc18fbe40ba17",
-      "passwordSalt": "fde93753e68f4867596eae54e4389c5e"
+      "passwordSalt": "fde93753e68f4867596eae54e4389c5e",
+      "failedLoginCount": 0,
+      "lockedUntil": ""
     }
   ],
   "subscriptions": {},
@@ -19,5 +21,6 @@
   "invites": [],
   "passwordResets": [],
   "publicSignup": false,
-  "emailQueue": []
+  "emailQueue": [],
+  "announcements": []
 }

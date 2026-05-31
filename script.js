@@ -333,6 +333,10 @@ function renderAccounts() {
   renderSignupAccess();
   renderEmailStatus();
   renderUserPreviewSelector();
+  renderSystemHealth();
+  renderRiskReview();
+  renderInviteManagement();
+  renderAnnouncementEditor();
   const search = (document.getElementById('userSearch')?.value || '').trim().toLowerCase();
   const accounts = getAccounts().filter(account => {
     if (!search) return true;
@@ -354,12 +358,111 @@ function renderAccounts() {
       <td data-label="Last Login">${account.lastLoginAt ? new Date(account.lastLoginAt).toLocaleString() : 'Never'}</td>
       <td data-label="Actions" class="actions-cell">
         <button class="btn ghost small-btn" onclick="preparePasswordReset('${escapeJs(account.username)}')">Reset</button>
+        <button class="btn ghost small-btn" onclick="unlockAccount('${escapeJs(account.username)}')" ${!account.lockedUntil && !Number(account.failedLoginCount || 0) ? 'disabled' : ''}>Unlock</button>
         <button class="btn ghost small-btn" onclick="toggleAccountDisabled('${escapeJs(account.username)}')" ${account.username === 'admin' ? 'disabled' : ''}>${account.disabled ? 'Enable' : 'Disable'}</button>
         <button class="btn danger small-btn" onclick="deleteAccount('${escapeJs(account.username)}')">Delete</button>
       </td>
     </tr>
   `).join('') || '<tr><td colspan="7">No users match your search.</td></tr>';
   renderAuditLog();
+}
+
+async function postAdminAction(url, payload = {}) {
+  const response = await fetch(`${BACKEND_CONFIG.apiBaseUrl}${url}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Admin action failed');
+  await loadBackendState();
+  return result;
+}
+
+async function renderSystemHealth() {
+  const container = document.getElementById('systemHealth');
+  if (!container) return;
+  const health = await fetch(`${BACKEND_CONFIG.apiBaseUrl}/health`).then(response => response.json()).catch(() => null);
+  const lastJob = [...getAuditLog()].reverse().find(entry => entry.action.startsWith('scheduled_') || entry.action.startsWith('monthly_summary'));
+  container.innerHTML = health ? `
+    <div class="status-strip">
+      <span><strong>${escapeHtml(health.storage)}</strong> storage</span>
+      <span><strong>${health.email?.configured ? 'Ready' : 'Queue'}</strong> email</span>
+      <span><strong>${health.email?.scheduledJobsConfigured ? 'Set' : 'Missing'}</strong> cron</span>
+    </div>
+    <div class="history-item"><div><strong>Database</strong><span>${escapeHtml(health.database?.host || 'local json file')}</span></div><div><strong>${health.database?.valid === false ? 'Invalid' : 'OK'}</strong><span>${escapeHtml(String(health.database?.ssl ?? 'n/a'))}</span></div></div>
+    <div class="history-item"><div><strong>Last Scheduled Job</strong><span>${lastJob ? escapeHtml(lastJob.detail) : 'No scheduled job recorded'}</span></div><div><strong>${lastJob ? new Date(lastJob.createdAt).toLocaleString() : 'Never'}</strong><span>${escapeHtml(lastJob?.actor || 'system')}</span></div></div>
+  ` : '<p class="muted compact">Health check unavailable.</p>';
+}
+
+function renderRiskReview() {
+  const container = document.getElementById('riskReview');
+  if (!container) return;
+  const risks = [];
+  getAccounts().forEach(account => {
+    if (!account.email) risks.push({ title: account.username, detail: 'No email address set', action: 'Profile risk' });
+    if (account.disabled) risks.push({ title: account.username, detail: 'Account is disabled', action: 'Disabled' });
+    if (Number(account.failedLoginCount || 0) > 0) risks.push({ title: account.username, detail: `${account.failedLoginCount} failed login attempts`, action: account.lockedUntil ? 'Locked' : 'Watch' });
+  });
+  (backendState.emailQueue || []).filter(item => item.status === 'failed').slice(-8).forEach(item => {
+    risks.push({ title: item.email || item.username, detail: item.error || 'Email failed', action: 'Email' });
+  });
+  getAccounts().forEach(account => {
+    getSubscriptionsForUser(account.username).filter(sub => sub.status === 'Cancel Soon').forEach(sub => {
+      risks.push({ title: `${account.username}: ${sub.name}`, detail: 'Subscription marked Cancel Soon', action: 'Billing' });
+    });
+  });
+  container.innerHTML = risks.map(item => `
+    <div class="history-item">
+      <div><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span></div>
+      <div><strong>${escapeHtml(item.action)}</strong><span>review</span></div>
+    </div>
+  `).join('') || '<p class="muted compact">No current risks flagged.</p>';
+}
+
+function renderInviteManagement() {
+  const container = document.getElementById('inviteManagement');
+  if (!container) return;
+  const invites = (backendState.invites || []).slice(-20).reverse();
+  container.innerHTML = invites.map(invite => `
+    <div class="history-item">
+      <div>
+        <strong>${escapeHtml(invite.username)}</strong>
+        <span>${escapeHtml(invite.email)} - ${escapeHtml(invite.role)} - ${invite.revokedAt ? 'revoked' : invite.usedAt ? 'used' : 'pending'}</span>
+      </div>
+      <div class="actions-cell">
+        <button class="btn ghost small-btn" onclick="resendInvite('${escapeJs(invite.token || '')}')" ${invite.usedAt || invite.revokedAt ? 'disabled' : ''}>Resend</button>
+        <button class="btn danger small-btn" onclick="revokeInvite('${escapeJs(invite.token || '')}')" ${invite.usedAt || invite.revokedAt ? 'disabled' : ''}>Revoke</button>
+      </div>
+    </div>
+  `).join('') || '<p class="muted compact">No invites yet.</p>';
+}
+
+async function resendInvite(token) {
+  try {
+    await postAdminAction('/admin/resend-invite', { token });
+    renderInviteManagement();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function revokeInvite(token) {
+  try {
+    await postAdminAction('/admin/revoke-invite', { token });
+    renderInviteManagement();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+async function unlockAccount(username) {
+  try {
+    await postAdminAction('/admin/unlock-account', { username });
+    renderAccounts();
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function renderEmailStatus() {
@@ -830,6 +933,69 @@ function exportUsers() {
   renderAuditLog();
 }
 
+function exportAuditLog() {
+  const headers = ['Action', 'Target', 'Actor', 'Detail', 'Created'];
+  const rows = getAuditLog().map(entry => [entry.action, entry.target || '', entry.actor || '', entry.detail || '', entry.createdAt]);
+  const csv = [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
+  downloadCsv(csv, 'subtracked-audit.csv');
+}
+
+function exportSelectedUserData() {
+  const username = document.getElementById('previewUserSelect')?.value;
+  if (!username) return;
+  const payload = {
+    account: getAccounts().find(account => account.username === username),
+    subscriptions: getSubscriptionsForUser(username),
+    settings: getSettingsForUser(username),
+    history: usingBackend() ? (backendState.history[username] || []) : JSON.parse(localStorage.getItem(historyKeyFor(username)) || '[]')
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `subtracked-${username}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function sendTestEmail(event) {
+  event.preventDefault();
+  const message = document.getElementById('testEmailMessage');
+  try {
+    const result = await postAdminAction('/admin/test-email', { email: document.getElementById('testEmailAddress').value.trim() });
+    showMessage(message, `Test email ${result.status}.`, result.status === 'failed');
+    renderEmailStatus();
+  } catch (error) {
+    showMessage(message, error.message, true);
+  }
+}
+
+function renderAnnouncementEditor() {
+  const input = document.getElementById('announcementText');
+  if (!input || !usingBackend()) return;
+  const active = (backendState.announcements || []).find(item => !item.expiresAt || new Date(item.expiresAt) > new Date());
+  input.value = active?.message || '';
+}
+
+function saveAnnouncement(event) {
+  event.preventDefault();
+  const message = document.getElementById('announcementMessage');
+  const text = document.getElementById('announcementText').value.trim();
+  backendState.announcements = text ? [{ message: text, createdAt: new Date().toISOString(), createdBy: getSession()?.username || 'admin' }] : [];
+  persistBackendState()
+    .then(() => {
+      writeAudit('announcement_update', 'all_users', text ? 'Published announcement.' : 'Cleared announcement.');
+      showMessage(message, text ? 'Announcement published.' : 'Announcement cleared.', false);
+    })
+    .catch(() => showMessage(message, 'Announcement could not be saved.', true));
+}
+
+function clearAnnouncement() {
+  const input = document.getElementById('announcementText');
+  if (input) input.value = '';
+  saveAnnouncement({ preventDefault() {} });
+}
+
 function subscriptionKeyFor(username) {
   return `${STORAGE_KEYS.subscriptions}_${username}`;
 }
@@ -1282,6 +1448,7 @@ function renderDashboard() {
   const budget = Number(settings.monthlyBudget) || 0;
   const remainingBudget = budget - monthly;
   const dueThisMonth = getMonthlyDue(subscriptions, today.getFullYear(), today.getMonth());
+  renderAnnouncementBanner();
 
   document.getElementById('monthlySpend').textContent = `$${monthly.toFixed(2)}`;
   document.getElementById('annualSpend').textContent = `$${(monthly * 12).toFixed(2)}`;
@@ -1321,6 +1488,14 @@ function renderDashboard() {
   processReminderEmails(subscriptions);
   renderCalendar();
   renderSettings();
+}
+
+function renderAnnouncementBanner() {
+  const banner = document.getElementById('announcementBanner');
+  if (!banner || !usingBackend()) return;
+  const active = (backendState.announcements || []).find(item => !item.expiresAt || new Date(item.expiresAt) > new Date());
+  banner.textContent = active?.message || '';
+  banner.classList.toggle('hidden', !active?.message);
 }
 
 function renderCategoryFilter(subscriptions) {
