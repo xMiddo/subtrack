@@ -1046,6 +1046,57 @@ th {
   margin-top: 18px;
 }
 
+.checklist {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.checklist-item {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 13px 14px;
+  border: 1px solid #edf0f5;
+  border-radius: 14px;
+  background: #fafbff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.checklist-item:hover {
+  border-color: #d7d9ff;
+  background: var(--accent-soft);
+}
+
+.checklist-item span {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.checklist-item.done {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.dark-mode .checklist-item {
+  background: #111827;
+  border-color: #334155;
+}
+
+.dark-mode .checklist-item:hover {
+  background: #26324a;
+}
+
+.dark-mode .checklist-item.done {
+  background: #10251a;
+  border-color: #166534;
+}
+
 .import-label {
   margin: 0;
 }

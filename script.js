@@ -10,6 +10,15 @@ const STORAGE_KEYS = {
 
 const DEFAULT_ADMIN = { username: 'admin', password: 'admin123', role: 'admin', disabled: false, createdAt: new Date().toISOString(), lastLoginAt: '' };
 const HIGH_COST_THRESHOLD = 30;
+const SUBSCRIPTION_TEMPLATES = [
+  { name: 'Netflix', category: 'Streaming', cost: 15.49, billingCycle: '1', url: 'https://www.netflix.com/cancelplan' },
+  { name: 'Spotify', category: 'Music', cost: 10.99, billingCycle: '1', url: 'https://www.spotify.com/account/subscription/' },
+  { name: 'Adobe Creative Cloud', category: 'Software', cost: 59.99, billingCycle: '1', url: 'https://account.adobe.com/plans' },
+  { name: 'Microsoft 365', category: 'Software', cost: 69.99, billingCycle: '12', url: 'https://account.microsoft.com/services' },
+  { name: 'iCloud+', category: 'Cloud', cost: 2.99, billingCycle: '1', url: 'https://support.apple.com/billing' },
+  { name: 'Xbox Game Pass', category: 'Gaming', cost: 16.99, billingCycle: '1', url: 'https://account.microsoft.com/services' }
+];
+const CURRENCY_SYMBOLS = { USD: '$', GBP: '£', EUR: '€', AUD: 'A$' };
 const BACKEND_CONFIG = {
   enabled: location.protocol === 'http:' || location.protocol === 'https:',
   apiBaseUrl: '/api'
@@ -31,6 +40,7 @@ function emptyBackendState() {
     audit: [],
     reminderSent: [],
     emailQueue: [],
+    adminNotes: {},
     publicSignup: false
   };
 }
@@ -282,13 +292,13 @@ async function addAccount(event) {
     if (usingBackend()) {
       backendState.accounts = accounts;
       backendState.subscriptions[username] = [];
-      backendState.settings[username] = { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false };
+      backendState.settings[username] = defaultSettings();
       backendState.history[username] = [];
       await persistBackendState();
     } else {
       await saveAccounts(accounts);
       localStorage.setItem(subscriptionKeyFor(username), JSON.stringify([]));
-      localStorage.setItem(settingsKeyFor(username), JSON.stringify({ monthlyBudget: 0, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false }));
+      localStorage.setItem(settingsKeyFor(username), JSON.stringify(defaultSettings()));
       localStorage.setItem(historyKeyFor(username), JSON.stringify([]));
     }
     await writeAudit('create_account', username, `Created ${role} account.`);
@@ -495,10 +505,21 @@ async function renderEmailStatus() {
         <div>
           <strong>${escapeHtml(item.status || 'queued')}</strong>
           <span>${escapeHtml(item.error || new Date(item.createdAt).toLocaleString())}</span>
+          ${item.status === 'failed' ? `<button class="btn ghost small-btn" type="button" onclick="retryEmail('${escapeJs(item.id)}')">Retry</button>` : ''}
         </div>
       </div>
     `).join('') || '<p class="muted compact">No reminder emails have been queued yet.</p>'}
   `;
+}
+
+async function retryEmail(id) {
+  try {
+    await postAdminAction('/admin/retry-email', { id });
+    renderEmailStatus();
+    renderAuditLog();
+  } catch (error) {
+    alert(error.message);
+  }
 }
 
 async function runDailyEmailJob() {
@@ -543,23 +564,23 @@ function renderUserPreview() {
 
   container.innerHTML = account ? `
     <div class="preview-stats">
-      <div><span>Monthly</span><strong>$${monthly.toFixed(2)}</strong></div>
+      <div><span>Monthly</span><strong>${escapeHtml(formatCurrency(monthly, settings))}</strong></div>
       <div><span>Subscriptions</span><strong>${subscriptions.length}</strong></div>
-      <div><span>Budget</span><strong>$${Number(settings.monthlyBudget || 0).toFixed(2)}</strong></div>
+      <div><span>Budget</span><strong>${escapeHtml(formatCurrency(settings.monthlyBudget || 0, settings))}</strong></div>
     </div>
     <div class="history-list">
       <h3>Top Categories</h3>
       ${categories.map(([category, total]) => `
         <div class="history-item">
           <div><strong>${escapeHtml(category)}</strong><span>Monthly equivalent</span></div>
-          <div><strong>$${total.toFixed(2)}</strong><span>category spend</span></div>
+          <div><strong>${escapeHtml(formatCurrency(total, settings))}</strong><span>category spend</span></div>
         </div>
       `).join('') || '<p class="muted compact">No category spend yet.</p>'}
       <h3>Flagged Items</h3>
       ${flagged.map(sub => `
         <div class="history-item">
           <div><strong>${escapeHtml(sub.name)}</strong><span>${escapeHtml(sub.reason)}</span></div>
-          <div><strong>$${monthlyEquivalent(sub).toFixed(2)}</strong><span>monthly</span></div>
+          <div><strong>${escapeHtml(formatCurrency(monthlyEquivalent(sub), settings))}</strong><span>monthly</span></div>
         </div>
       `).join('') || '<p class="muted compact">No savings flags for this user.</p>'}
       <h3>Upcoming Bills</h3>
@@ -570,13 +591,78 @@ function renderUserPreview() {
             <span>${escapeHtml(sub.category)} - ${escapeHtml(formatDate(sub.nextBillDate))}</span>
           </div>
           <div>
-            <strong>$${Number(sub.cost).toFixed(2)}</strong>
+            <strong>${escapeHtml(formatCurrency(sub.cost, settings))}</strong>
             <span>${escapeHtml(sub.status)}</span>
           </div>
         </div>
       `).join('') || '<p class="muted compact">No upcoming bills for this user.</p>'}
     </div>
   ` : '<p class="muted compact">Choose a user to preview their dashboard.</p>';
+  renderAdminNote();
+}
+
+function renderAdminNote() {
+  const input = document.getElementById('adminNoteText');
+  const select = document.getElementById('previewUserSelect');
+  if (!input || !select || !usingBackend()) return;
+  input.value = backendState.adminNotes?.[select.value]?.text || '';
+}
+
+function saveAdminNote(event) {
+  event.preventDefault();
+  const select = document.getElementById('previewUserSelect');
+  const input = document.getElementById('adminNoteText');
+  const message = document.getElementById('adminNoteMessage');
+  if (!select || !input || !usingBackend()) return;
+  postAdminAction('/admin/note', { username: select.value, text: input.value.trim() })
+    .then(() => {
+      showMessage(message, 'Admin note saved.', false);
+      renderAdminNote();
+      renderAuditLog();
+    })
+    .catch(() => showMessage(message, 'Admin note could not be saved.', true));
+}
+
+function runAdminQuickAction(event) {
+  event.preventDefault();
+  const input = document.getElementById('adminQuickAction');
+  const message = document.getElementById('adminQuickActionMessage');
+  const text = (input?.value || '').trim();
+  const [command, username, ...rest] = text.split(/\s+/);
+  if (!command || !username) {
+    showMessage(message, 'Enter a command and username.', true);
+    return;
+  }
+
+  if (command === 'disable' || command === 'enable') {
+    const account = getAccounts().find(item => item.username === username);
+    if (!account) return showMessage(message, 'Account not found.', true);
+    if ((command === 'disable') !== account.disabled) toggleAccountDisabled(username);
+    showMessage(message, `${username} is ${command === 'disable' ? 'disabled' : 'enabled'}.`, false);
+  } else if (command === 'reset') {
+    preparePasswordReset(username);
+    const password = rest.join(' ');
+    if (password) {
+      document.getElementById('resetPassword').value = password;
+      resetUserPassword({ preventDefault() {}, target: document.querySelector('#resetPassword')?.form });
+    }
+    showMessage(message, password ? `Password reset for ${username}.` : `Ready to reset ${username}.`, false);
+  } else if (command === 'invite') {
+    document.getElementById('inviteUsername').value = username;
+    document.getElementById('inviteEmail').value = rest[0] || '';
+    showMessage(message, `Invite form filled for ${username}.`, false);
+  } else if (command === 'note') {
+    const select = document.getElementById('previewUserSelect');
+    if (select) select.value = username;
+    renderUserPreview();
+    const note = rest.join(' ');
+    if (note) document.getElementById('adminNoteText').value = note;
+    showMessage(message, `Note ready for ${username}.`, false);
+  } else {
+    showMessage(message, 'Unknown command. Try disable, enable, reset, invite, or note.', true);
+    return;
+  }
+  if (input) input.value = '';
 }
 
 function changeUserRole(username, role) {
@@ -1060,30 +1146,25 @@ function getCurrentHistoryKey() {
   return historyKeyFor(session ? session.username : 'guest');
 }
 
-function getSettings() {
-  if (usingBackend()) {
-    const session = getSession();
-    return {
-      monthlyBudget: 0,
-      darkMode: false,
-      emailRemindersEnabled: true,
-      defaultReminderDays: 7,
-      highCostWarnings: true,
-      highCostLimit: HIGH_COST_THRESHOLD,
-      monthlySummaryEmail: false,
-      ...(backendState.settings[session?.username || 'guest'] || {})
-    };
-  }
+function defaultSettings() {
   return {
     monthlyBudget: 0,
     darkMode: false,
+    currencyCode: 'USD',
     emailRemindersEnabled: true,
     defaultReminderDays: 7,
     highCostWarnings: true,
     highCostLimit: HIGH_COST_THRESHOLD,
-    monthlySummaryEmail: false,
-    ...JSON.parse(localStorage.getItem(getCurrentSettingsKey()) || '{}')
+    monthlySummaryEmail: false
   };
+}
+
+function getSettings() {
+  if (usingBackend()) {
+    const session = getSession();
+    return { ...defaultSettings(), ...(backendState.settings[session?.username || 'guest'] || {}) };
+  }
+  return { ...defaultSettings(), ...JSON.parse(localStorage.getItem(getCurrentSettingsKey()) || '{}') };
 }
 
 function saveSettings(settings) {
@@ -1220,9 +1301,9 @@ function getSubscriptionsForUser(username) {
 
 function getSettingsForUser(username) {
   if (usingBackend()) {
-    return { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false, ...(backendState.settings[username] || {}) };
+    return { ...defaultSettings(), ...(backendState.settings[username] || {}) };
   }
-  return { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: HIGH_COST_THRESHOLD, monthlySummaryEmail: false, ...JSON.parse(localStorage.getItem(settingsKeyFor(username)) || '{}') };
+  return { ...defaultSettings(), ...JSON.parse(localStorage.getItem(settingsKeyFor(username)) || '{}') };
 }
 
 function ensureSubscriptionShape(sub) {
@@ -1287,8 +1368,36 @@ function formatDate(value) {
   });
 }
 
+function formatCurrency(value, settings = getSettings()) {
+  const code = settings.currencyCode || 'USD';
+  const symbol = CURRENCY_SYMBOLS[code] || '$';
+  return `${symbol}${Number(value || 0).toFixed(2)}`;
+}
+
 function dateKeyForSort(sub) {
   return normalizeDate(sub.nextBillDate || sub.nextBill || '9999-12-31') || '9999-12-31';
+}
+
+function renderSubscriptionTemplates() {
+  const select = document.getElementById('subscriptionTemplate');
+  if (!select || select.dataset.ready) return;
+  select.innerHTML = '<option value="">Start blank</option>' + SUBSCRIPTION_TEMPLATES.map(template => (
+    `<option value="${escapeHtml(template.name)}">${escapeHtml(template.name)} - ${escapeHtml(template.category)}</option>`
+  )).join('');
+  select.dataset.ready = 'true';
+}
+
+function applySubscriptionTemplate() {
+  const selected = document.getElementById('subscriptionTemplate')?.value;
+  const template = SUBSCRIPTION_TEMPLATES.find(item => item.name === selected);
+  if (!template) return;
+  document.getElementById('subName').value = template.name;
+  document.getElementById('subCategory').value = template.category;
+  document.getElementById('subCost').value = Number(template.cost).toFixed(2);
+  document.getElementById('subBillingCycle').value = template.billingCycle;
+  document.getElementById('subCancelUrl').value = template.url;
+  document.getElementById('subSupportUrl').value = template.url;
+  toggleCustomBillingCycle();
 }
 
 function addSubscription(event) {
@@ -1404,6 +1513,8 @@ function resetSubscriptionForm() {
   const form = document.querySelector('#subscriptions form');
   if (form) form.reset();
   document.getElementById('editingSubId').value = '';
+  const template = document.getElementById('subscriptionTemplate');
+  if (template) template.value = '';
   document.getElementById('subscriptionFormTitle').textContent = 'Add Subscription';
   document.getElementById('saveSubButton').textContent = 'Save Subscription';
   document.getElementById('cancelEditButton').classList.add('hidden');
@@ -1487,13 +1598,13 @@ function renderDashboard() {
   const dueThisMonth = getMonthlyDue(subscriptions, today.getFullYear(), today.getMonth());
   renderAnnouncementBanner();
 
-  document.getElementById('monthlySpend').textContent = `$${monthly.toFixed(2)}`;
-  document.getElementById('annualSpend').textContent = `$${(monthly * 12).toFixed(2)}`;
+  document.getElementById('monthlySpend').textContent = formatCurrency(monthly, settings);
+  document.getElementById('annualSpend').textContent = formatCurrency(monthly * 12, settings);
   document.getElementById('subCount').textContent = subscriptions.length;
-  document.getElementById('potentialSavings').textContent = `$${getAnnualSavings(savings).toFixed(0)}/yr`;
+  document.getElementById('potentialSavings').textContent = `${formatCurrency(getAnnualSavings(savings), settings).replace(/\.00$/, '')}/yr`;
   document.getElementById('budgetLabel').textContent = budget && remainingBudget < 0 ? 'Over Budget' : 'Spending Budget';
-  document.getElementById('budgetStatus').textContent = budget ? `$${Math.abs(remainingBudget).toFixed(2)}` : '$0.00';
-  document.getElementById('dueThisMonth').textContent = `$${dueThisMonth.toFixed(2)}`;
+  document.getElementById('budgetStatus').textContent = budget ? formatCurrency(Math.abs(remainingBudget), settings) : formatCurrency(0, settings);
+  document.getElementById('dueThisMonth').textContent = formatCurrency(dueThisMonth, settings);
 
   const emptyTableHtml = subscriptions.length
     ? 'No matching subscriptions yet.'
@@ -1503,7 +1614,7 @@ function renderDashboard() {
     <tr>
       <td data-label="Name">${escapeHtml(sub.name)}</td>
       <td data-label="Category">${escapeHtml(sub.category)}</td>
-      <td data-label="Cost">$${Number(sub.cost).toFixed(2)}<span class="cell-note">${escapeHtml(formatBillingCycle(sub))}</span></td>
+      <td data-label="Cost">${escapeHtml(formatCurrency(sub.cost, settings))}<span class="cell-note">${escapeHtml(formatBillingCycle(sub))}</span></td>
       <td data-label="Next Bill">${escapeHtml(formatDate(sub.nextBillDate))}</td>
       <td data-label="Payment">${escapeHtml(sub.paymentMethod || 'Not set')}</td>
       <td data-label="Status"><span class="pill ${statusClass(sub.status)}">${escapeHtml(sub.status)}</span></td>
@@ -1522,6 +1633,8 @@ function renderDashboard() {
   renderCategoryChart(billableSubscriptions);
   renderSpendingHistory();
   renderPriceChangeLog(subscriptions);
+  renderOnboardingChecklist(subscriptions);
+  renderSubscriptionTemplates();
   processReminderEmails(subscriptions);
   renderCalendar();
   renderSettings();
@@ -1557,6 +1670,7 @@ function statusClass(status) {
 function renderDueSoon(subscriptions) {
   const container = document.getElementById('dueSoonList');
   if (!container) return;
+  const settings = getSettings();
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1569,7 +1683,7 @@ function renderDueSoon(subscriptions) {
   container.innerHTML = dueSoon.map(sub => `
     <div class="mini-item">
       <span>${escapeHtml(sub.name)}</span>
-      <strong>${sub.daysUntil === 0 ? 'Today' : `${sub.daysUntil}d`} - $${Number(sub.cost).toFixed(2)}</strong>
+      <strong>${sub.daysUntil === 0 ? 'Today' : `${sub.daysUntil}d`} - ${escapeHtml(formatCurrency(sub.cost, settings))}</strong>
     </div>
   `).join('') || '<p class="muted compact">No bills due in the next 7 days.</p>';
 }
@@ -1593,6 +1707,7 @@ function getUpcomingBills(subscriptions, days) {
 function renderUpcomingBills(subscriptions) {
   const container = document.getElementById('upcomingBills');
   if (!container) return;
+  const settings = getSettings();
 
   const windows = [7, 14, 30];
   container.innerHTML = windows.map(days => {
@@ -1608,7 +1723,7 @@ function renderUpcomingBills(subscriptions) {
                 <span>${escapeHtml(sub.category)} - ${escapeHtml(formatBillingCycle(sub))}</span>
               </div>
               <div>
-                <strong>$${Number(sub.cost).toFixed(2)}</strong>
+                <strong>${escapeHtml(formatCurrency(sub.cost, settings))}</strong>
                 <span>${sub.daysUntil === 0 ? 'Today' : `${sub.daysUntil} days`} - ${escapeHtml(formatDate(sub.nextDate.toISOString().slice(0, 10)))}</span>
               </div>
             </div>
@@ -1767,6 +1882,7 @@ function getAnnualSavings(candidates) {
 function renderCategoryChart(subscriptions) {
   const chart = document.getElementById('categoryChart');
   if (!chart) return;
+  const settings = getSettings();
 
   if (!subscriptions.length) {
     chart.innerHTML = '<p class="muted compact">Add subscriptions to see a category breakdown.</p>';
@@ -1784,7 +1900,7 @@ function renderCategoryChart(subscriptions) {
     <div class="chart-row">
       <div class="chart-meta">
         <strong>${escapeHtml(category)}</strong>
-        <span>$${total.toFixed(2)}/mo</span>
+        <span>${escapeHtml(formatCurrency(total, settings))}/mo</span>
       </div>
       <div class="chart-track"><span style="width: ${(total / max) * 100}%"></span></div>
     </div>
@@ -1794,6 +1910,7 @@ function renderCategoryChart(subscriptions) {
 function renderSpendingHistory() {
   const container = document.getElementById('spendingHistory');
   if (!container) return;
+  const settings = getSettings();
 
   const history = getHistory().slice(-6).reverse();
   if (!history.length) {
@@ -1811,8 +1928,8 @@ function renderSpendingHistory() {
           <span>${Number(item.count) || 0} subscriptions</span>
         </div>
         <div>
-          <strong>$${Number(item.actualDue).toFixed(2)}</strong>
-          <span>$${Number(item.monthlyAverage).toFixed(2)} avg</span>
+          <strong>${escapeHtml(formatCurrency(item.actualDue, settings))}</strong>
+          <span>${escapeHtml(formatCurrency(item.monthlyAverage, settings))} avg</span>
         </div>
       </div>
     `;
@@ -1848,6 +1965,27 @@ function renderPriceChangeLog(subscriptions) {
       </div>
     `;
   }).join('');
+}
+
+function renderOnboardingChecklist(subscriptions) {
+  const container = document.getElementById('onboardingChecklist');
+  if (!container) return;
+  const settings = getSettings();
+  const session = getSession();
+  const account = getAccounts().find(item => item.username === session?.username);
+  const items = [
+    { done: Boolean(account?.email), label: 'Add account email', action: 'showSection("settings")' },
+    { done: subscriptions.length > 0, label: 'Add first subscription', action: 'showSection("subscriptions")' },
+    { done: Number(settings.monthlyBudget || 0) > 0, label: 'Set monthly budget', action: 'showSection("settings")' },
+    { done: subscriptions.some(sub => Number(sub.reminderDays || 0) > 0) || settings.emailRemindersEnabled === false, label: 'Choose reminder preference', action: 'showSection("settings")' },
+    { done: subscriptions.some(sub => sub.cancelUrl || sub.supportUrl), label: 'Add cancellation/support link', action: 'showSection("subscriptions")' }
+  ];
+  container.innerHTML = items.map(item => `
+    <button class="checklist-item ${item.done ? 'done' : ''}" type="button" onclick="${item.action}">
+      <span>${item.done ? '✓' : '○'}</span>
+      <strong>${escapeHtml(item.label)}</strong>
+    </button>
+  `).join('');
 }
 
 function renderSavings(candidates, subscriptions) {
@@ -1959,9 +2097,11 @@ function goToCurrentMonth() {
 function renderSettings() {
   const budgetInput = document.getElementById('monthlyBudget');
   const emailInput = document.getElementById('accountEmail');
-  if (!budgetInput && !emailInput) return;
+  const currencyInput = document.getElementById('currencyCode');
+  if (!budgetInput && !emailInput && !currencyInput) return;
 
   const settings = getSettings();
+  if (currencyInput) currencyInput.value = settings.currencyCode || 'USD';
   if (budgetInput && document.activeElement !== budgetInput) {
     budgetInput.value = settings.monthlyBudget ? Number(settings.monthlyBudget).toFixed(2) : '';
   }
@@ -1985,8 +2125,9 @@ function renderSettings() {
 function saveBudget(event) {
   event.preventDefault();
   const monthlyBudget = Number(document.getElementById('monthlyBudget').value) || 0;
+  const currencyCode = document.getElementById('currencyCode')?.value || 'USD';
   const message = document.getElementById('budgetMessage');
-  saveSettings({ ...getSettings(), monthlyBudget });
+  saveSettings({ ...getSettings(), monthlyBudget, currencyCode });
   showMessage(message, 'Budget saved.', false);
   renderDashboard();
 }

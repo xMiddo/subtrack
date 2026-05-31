@@ -142,6 +142,17 @@
     </section>
 
     <section class="dashboard-grid lower-grid">
+      <div class="card form-card">
+        <h2>Admin Quick Actions</h2>
+        <form onsubmit="runAdminQuickAction(event)" class="stack-form">
+          <label for="adminQuickAction">Command</label>
+          <input id="adminQuickAction" type="text" placeholder="invite sarah sarah@example.com" />
+          <p class="muted compact">Try: disable username, enable username, reset username newpassword, invite username email, note username text.</p>
+          <p id="adminQuickActionMessage" class="message hidden"></p>
+          <button class="btn" type="submit">Run Action</button>
+        </form>
+      </div>
+
       <div class="card table-card">
         <div class="table-head">
           <h2>Email Status</h2>
@@ -159,6 +170,12 @@
           <select id="previewUserSelect" onchange="renderUserPreview()"></select>
         </div>
         <div id="userPreview" class="preview-panel"></div>
+        <form onsubmit="saveAdminNote(event)" class="stack-form">
+          <label for="adminNoteText">Admin Note</label>
+          <textarea id="adminNoteText" rows="3" placeholder="Private note for admins"></textarea>
+          <p id="adminNoteMessage" class="message hidden"></p>
+          <button class="btn ghost" type="submit">Save Note</button>
+        </form>
       </div>
     </section>
 

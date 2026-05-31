@@ -51,6 +51,7 @@ function defaultState() {
     passwordResets: [],
     publicSignup: false,
     emailQueue: [],
+    adminNotes: {},
     announcements: []
   };
 }
@@ -184,6 +185,7 @@ function sanitizeStateForClient(state, session = null) {
     ? (cleanState.invites || []).map(({ token, ...invite }) => invite)
     : [];
   cleanState.emailQueue = ['owner', 'admin'].includes(session?.role) ? (cleanState.emailQueue || []) : [];
+  cleanState.adminNotes = ['owner', 'admin'].includes(session?.role) ? (cleanState.adminNotes || {}) : {};
   cleanState.passwordResets = [];
   return cleanState;
 }
@@ -915,6 +917,61 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.url === '/api/admin/retry-email' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const state = await readState();
+      const message = (state.emailQueue || []).find(item => item.id === String(body.id || ''));
+      if (!message) {
+        sendJson(res, 404, { ok: false, error: 'Email message not found' });
+        return;
+      }
+      if (!message.email) {
+        sendJson(res, 400, { ok: false, error: 'Email message has no recipient' });
+        return;
+      }
+      try {
+        await sendEmail({
+          to: message.email,
+          subject: message.subscription === 'Test email' ? 'SubTracked test email' : `${message.subscription || 'SubTracked'} reminder`,
+          html: `<p>${escapeHtml(message.subscription || 'SubTracked notification')}</p><p>${escapeHtml(message.nextBillDate || '')}</p>`
+        });
+        message.status = 'sent';
+        message.sentAt = new Date().toISOString();
+        message.error = '';
+      } catch (error) {
+        message.status = RESEND_API_KEY && REMINDER_FROM_EMAIL ? 'failed' : 'queued';
+        message.error = error.message;
+      }
+      appendAudit(state, 'retry_email', message.email, `Retried email ${message.status}.`, session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true, status: message.status });
+      return;
+    }
+
+    if (req.url === '/api/admin/note' && req.method === 'POST') {
+      const session = requireAdmin(req, res);
+      if (!session) return;
+      const body = JSON.parse(await readBody(req) || '{}');
+      const username = String(body.username || '').trim();
+      const state = await readState();
+      if (!(state.accounts || []).some(account => account.username === username)) {
+        sendJson(res, 404, { ok: false, error: 'Account not found' });
+        return;
+      }
+      state.adminNotes = state.adminNotes || {};
+      state.adminNotes[username] = {
+        text: String(body.text || '').trim(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: session.username
+      };
+      appendAudit(state, 'admin_note_update', username, 'Updated admin note.', session.username);
+      await writeState(state);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (req.url === '/api/signup' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req) || '{}');
       const state = await readState();
@@ -943,7 +1000,7 @@ const server = http.createServer(async (req, res) => {
 
       state.accounts.push({ username, email, password, role, disabled: false, createdAt: new Date().toISOString(), lastLoginAt: '' });
       state.subscriptions[username] = [];
-      state.settings[username] = { monthlyBudget: 0, darkMode: false, emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: 30, monthlySummaryEmail: false };
+      state.settings[username] = { monthlyBudget: 0, darkMode: false, currencyCode: 'USD', emailRemindersEnabled: true, defaultReminderDays: 7, highCostWarnings: true, highCostLimit: 30, monthlySummaryEmail: false };
       state.history[username] = [];
       if (invite) invite.usedAt = new Date().toISOString();
       appendAudit(state, invite ? 'accept_invite' : 'public_signup', username, 'Created account through signup.', username);

@@ -89,6 +89,11 @@
 
       <section class="dashboard-grid lower-grid">
         <div class="card">
+          <h2>Onboarding Checklist</h2>
+          <div id="onboardingChecklist" class="checklist"></div>
+        </div>
+
+        <div class="card">
           <h2>Price Change Log</h2>
           <div id="priceChangeLog" class="history-list"></div>
         </div>
@@ -126,6 +131,10 @@
         <h2 id="subscriptionFormTitle">Add Subscription</h2>
         <form onsubmit="addSubscription(event)" class="stack-form">
           <input id="editingSubId" type="hidden" />
+          <label for="subscriptionTemplate">Subscription Template</label>
+          <select id="subscriptionTemplate" onchange="applySubscriptionTemplate()">
+            <option value="">Start blank</option>
+          </select>
           <label for="subName">Subscription Name</label>
           <input id="subName" type="text" placeholder="Canva" required />
           <label for="subCategory">Category</label>
@@ -231,6 +240,13 @@
         <div class="card form-card">
           <h2>Budget</h2>
           <form onsubmit="saveBudget(event)" class="stack-form">
+            <label for="currencyCode">Currency</label>
+            <select id="currencyCode">
+              <option value="USD">USD - $</option>
+              <option value="GBP">GBP - £</option>
+              <option value="EUR">EUR - €</option>
+              <option value="AUD">AUD - A$</option>
+            </select>
             <label for="monthlyBudget">Monthly Subscription Budget</label>
             <input id="monthlyBudget" type="number" min="0" step="0.01" placeholder="150.00" />
             <p id="budgetMessage" class="message hidden"></p>
