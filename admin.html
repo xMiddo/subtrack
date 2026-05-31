@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin Panel | SubTrack</title>
+  <title>Admin Panel | SubTracked</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body data-page="admin" class="auth-pending">
   <aside class="sidebar">
-    <a href="index.html" class="logo">SubTrack</a>
+    <a href="index.html" class="logo">SubTracked</a>
     <a href="dashboard.html">Dashboard</a>
     <a href="admin.html" class="active">Admin Panel</a>
     <a href="#" onclick="logout()">Log Out</a>
@@ -100,7 +100,7 @@
               <strong>Public self-signup</strong>
               <small id="signupAccessStatus">Invite-only</small>
             </span>
-            <input id="publicSignupEnabled" type="checkbox" onchange="renderSignupAccess()" />
+            <input id="publicSignupEnabled" type="checkbox" onchange="previewSignupAccess()" />
             <span class="switch-track" aria-hidden="true"></span>
           </label>
           <p class="muted compact">When enabled, the login page shows a sign-up link. Invite links still work even when public signup is off.</p>

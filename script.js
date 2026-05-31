@@ -603,6 +603,13 @@ function renderSignupAccess() {
   if (status) status.textContent = enabled ? 'Open to new users' : 'Invite-only';
 }
 
+function previewSignupAccess() {
+  const checkbox = document.getElementById('publicSignupEnabled');
+  const status = document.getElementById('signupAccessStatus');
+  if (!checkbox || !status) return;
+  status.textContent = checkbox.checked ? 'Open to new users' : 'Invite-only';
+}
+
 function renderLoginSignupPrompt() {
   const prompt = document.getElementById('signupPrompt');
   if (!prompt) return;

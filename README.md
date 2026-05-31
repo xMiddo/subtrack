@@ -1,6 +1,6 @@
-# SubTrack
+# SubTracked
 
-SubTrack is a small subscription tracker with a built-in Node.js backend.
+SubTracked is a small subscription tracker with a built-in Node.js backend.
 
 ## Run Locally
 
@@ -53,7 +53,7 @@ On your host, add this environment variable:
 DATABASE_URL=your_supabase_postgres_connection_string
 ```
 
-When `DATABASE_URL` is set, SubTrack stores data in Postgres. When it is not set, SubTrack falls back to `data/db.json` for local testing.
+When `DATABASE_URL` is set, SubTracked stores data in Postgres. When it is not set, SubTracked falls back to `data/db.json` for local testing.
 
 For Railway Postgres with an internal `.railway.internal` host, SSL is disabled automatically. For proxy hosts such as `zephyr.proxy.rlwy.net`, SSL is required automatically. You can override this with:
 
@@ -87,11 +87,11 @@ Environment Variable: DATABASE_URL=...
 
 ## Email Reminders
 
-SubTrack queues reminder emails automatically when a user has an email address and a subscription reminder is due. To actually send those emails through Resend, add:
+SubTracked queues reminder emails automatically when a user has an email address and a subscription reminder is due. To actually send those emails through Resend, add:
 
 ```text
 RESEND_API_KEY=your_resend_api_key
-REMINDER_FROM_EMAIL=SubTrack <reminders@yourdomain.com>
+REMINDER_FROM_EMAIL=SubTracked <reminders@yourdomain.com>
 CRON_SECRET=long_random_secret
 SESSION_SECRET=another_long_random_secret
 ```

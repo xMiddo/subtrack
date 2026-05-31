@@ -513,7 +513,7 @@ async function runDailyJobs(actor = 'system') {
         try {
           await sendEmail({
             to: account.email,
-            subject: `SubTrack monthly summary for ${monthKey}`,
+            subject: `SubTracked monthly summary for ${monthKey}`,
             html: `<p>Hi ${escapeHtml(account.username)},</p><p>Your subscription average is <strong>$${monthly.toFixed(2)}/mo</strong>.</p><p>Bills due this month: <strong>$${due.toFixed(2)}</strong>.</p><p>Active subscriptions: <strong>${subscriptions.length}</strong>.</p>`
           });
           state.emailQueue = [...(state.emailQueue || []), { id: makeId(), username: account.username, email: account.email, subscription: 'Monthly summary', amount: due, nextBillDate: monthKey, createdAt: new Date().toISOString(), status: 'sent', sentAt: new Date().toISOString(), error: '' }].slice(-250);
@@ -677,8 +677,8 @@ const server = http.createServer(async (req, res) => {
         try {
           await sendEmail({
             to: account.email,
-            subject: 'Reset your SubTrack password',
-            html: `<p>Hi ${escapeHtml(account.username)},</p><p>Use this link to reset your SubTrack password. It expires in one hour:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`
+            subject: 'Reset your SubTracked password',
+            html: `<p>Hi ${escapeHtml(account.username)},</p><p>Use this link to reset your SubTracked password. It expires in one hour:</p><p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>`
           });
           appendAudit(state, 'password_reset_email', account.username, 'Sent password reset email.', 'system');
         } catch (error) {
@@ -783,8 +783,8 @@ const server = http.createServer(async (req, res) => {
       try {
         await sendEmail({
           to: email,
-          subject: 'You have been invited to SubTrack',
-          html: `<p>You have been invited to SubTrack as <strong>${escapeHtml(role)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Create your account</a></p><p>${escapeHtml(inviteUrl)}</p>`
+          subject: 'You have been invited to SubTracked',
+          html: `<p>You have been invited to SubTracked as <strong>${escapeHtml(role)}</strong>.</p><p><a href="${escapeHtml(inviteUrl)}">Create your account</a></p><p>${escapeHtml(inviteUrl)}</p>`
         });
         invite.emailStatus = 'sent';
       } catch (error) {
@@ -915,5 +915,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`SubTrack running at http://localhost:${PORT}`);
+  console.log(`SubTracked running at http://localhost:${PORT}`);
 });
